@@ -48,6 +48,27 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/outputs/apk/debug/*.apk
-          generate_release_notes: true
+          name: "Relocate ${{ github.ref_name }}"
+          body: |
+            ## Relocate ${{ github.ref_name }}
+
+            GPS location spoofing app for Android with route simulation.
+
+            ### Features
+            - **Standard (Mock) Mode** - Uses Android mock location API
+            - **Root Mode** - Undetectable spoofing via root access
+            - **Route Simulation** - Search start/end, pick driving/walking, set speed
+            - **Route Polyline** - Full amber route drawn on map with overview zoom
+            - **Arrow Marker** - Navigation arrow shows travel direction
+            - **Blue Dot GPS** - Google Maps-style current location with pulse ring
+            - **Address Search** - Powered by Nominatim API
+            - **Route Fetching** - Via OSRM public API
+            - **Preset & Recent Locations** - Save and quick-apply spots
+            - **Dark/Light Theme** - Material 3 dynamic theming
+            - **Foreground Service** - Keeps spoofing active in background
+
+            ### Install
+            Download the APK below and install on your Android device.
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
