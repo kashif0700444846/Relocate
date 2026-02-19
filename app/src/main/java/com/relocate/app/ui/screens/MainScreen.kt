@@ -32,16 +32,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.relocate.app.data.*
+import com.relocate.app.network.LatLng
 import com.relocate.app.network.NominatimApi
+import com.relocate.app.network.OsrmApi
 import com.relocate.app.spoofing.MockLocationEngine
 import com.relocate.app.spoofing.RootSpoofEngine
 import com.relocate.app.spoofing.SpoofService
 import com.relocate.app.ui.components.*
 import com.relocate.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import kotlin.math.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,6 +80,20 @@ fun MainScreen(
     var selectedPresetIndex by remember { mutableStateOf<Int?>(null) }
     var hasLoadedGps by remember { mutableStateOf(false) }
     var locationPermissionGranted by remember { mutableStateOf(false) }
+
+    // ── Route Simulation State ──
+    var routeStartQuery by remember { mutableStateOf("") }
+    var routeEndQuery by remember { mutableStateOf("") }
+    var routeStartLatLng by remember { mutableStateOf<LatLng?>(null) }
+    var routeEndLatLng by remember { mutableStateOf<LatLng?>(null) }
+    var routeMode by remember { mutableStateOf("driving") }
+    var routeSpeedKmh by remember { mutableFloatStateOf(50f) }
+    var routeDirection by remember { mutableStateOf("forward") }
+    var routeProgress by remember { mutableFloatStateOf(0f) }
+    var routeStatus by remember { mutableStateOf("Ready") }
+    var isRouteRunning by remember { mutableStateOf(false) }
+    var isRoutePaused by remember { mutableStateOf(false) }
+    var routeJob by remember { mutableStateOf<Job?>(null) }
 
     // ── Location Permission Launcher ──
     val locationPermissionLauncher = rememberLauncherForActivityResult(
@@ -407,6 +427,260 @@ fun MainScreen(
                 )
             }
 
+            // ── ROUTE SIMULATION (on MainScreen) ──
+            val showRouteSim by prefsManager.showRouteSim.collectAsState(initial = false)
+            if (showRouteSim) {
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "🛣️ Route Simulation",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+
+                        // Start point search
+                        OutlinedTextField(
+                            value = routeStartQuery,
+                            onValueChange = { routeStartQuery = it },
+                            label = { Text("🟢 Start Location") },
+                            placeholder = { Text("Search...") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            trailingIcon = {
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        val results = NominatimApi.search(routeStartQuery, 1)
+                                        if (results.isNotEmpty()) {
+                                            routeStartLatLng = LatLng(results[0].lat, results[0].lng)
+                                            routeStartQuery = results[0].name
+                                            Toast.makeText(context, "✅ Start: ${results[0].name}", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "❌ Not found", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }) {
+                                    Icon(Icons.Default.Search, "Search")
+                                }
+                            }
+                        )
+
+                        // End point search
+                        OutlinedTextField(
+                            value = routeEndQuery,
+                            onValueChange = { routeEndQuery = it },
+                            label = { Text("🔴 End Location") },
+                            placeholder = { Text("Search...") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            trailingIcon = {
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        val results = NominatimApi.search(routeEndQuery, 1)
+                                        if (results.isNotEmpty()) {
+                                            routeEndLatLng = LatLng(results[0].lat, results[0].lng)
+                                            routeEndQuery = results[0].name
+                                            Toast.makeText(context, "✅ End: ${results[0].name}", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "❌ Not found", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }) {
+                                    Icon(Icons.Default.Search, "Search")
+                                }
+                            }
+                        )
+
+                        // Use current coords as start
+                        TextButton(
+                            onClick = {
+                                routeStartLatLng = LatLng(latitude, longitude)
+                                routeStartQuery = String.format(Locale.US, "%.4f, %.4f", latitude, longitude)
+                            }
+                        ) {
+                            Text("📍 Use current position as start", fontSize = 12.sp)
+                        }
+
+                        // Mode chips
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("driving" to "🚗", "walking" to "🚶").forEach { (mode, emoji) ->
+                                FilterChip(
+                                    selected = routeMode == mode,
+                                    onClick = {
+                                        routeMode = mode
+                                        routeSpeedKmh = if (mode == "driving") 50f else 5f
+                                    },
+                                    label = { Text("$emoji $mode", fontSize = 12.sp) }
+                                )
+                            }
+                        }
+
+                        // Speed slider
+                        Text(
+                            "Speed: ${routeSpeedKmh.toInt()} km/h",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            value = routeSpeedKmh,
+                            onValueChange = { routeSpeedKmh = it },
+                            valueRange = 1f..200f,
+                            colors = SliderDefaults.colors(thumbColor = Amber, activeTrackColor = Amber)
+                        )
+
+                        // Progress bar
+                        LinearProgressIndicator(
+                            progress = { routeProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp),
+                            color = Amber,
+                            trackColor = MaterialTheme.colorScheme.outline
+                        )
+                        Text(
+                            routeStatus,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        // Control buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    val start = routeStartLatLng
+                                    val end = routeEndLatLng
+                                    if (start == null || end == null) {
+                                        Toast.makeText(context, "Search both start and end first", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+
+                                    scope.launch {
+                                        routeStatus = "Fetching route..."
+                                        isRouteRunning = true
+
+                                        val waypoints = if (routeDirection == "backward") {
+                                            listOf(end, start)
+                                        } else {
+                                            listOf(start, end)
+                                        }
+
+                                        val routePoints = OsrmApi.getRoute(waypoints, routeMode)
+                                        if (routePoints == null || routePoints.size < 2) {
+                                            routeStatus = "❌ Could not find route"
+                                            isRouteRunning = false
+                                            return@launch
+                                        }
+
+                                        routeStatus = "Simulating... (${routePoints.size} points)"
+                                        val metersPerSecond = (routeSpeedKmh * 1000) / 3600
+
+                                        // Ensure spoofing is active
+                                        prefsManager.setSpoofEnabled(true)
+                                        val firstPoint = routePoints[0]
+                                        SpoofService.startSpoof(
+                                            context, firstPoint.lat, firstPoint.lng, 10f, spoofMode
+                                        )
+
+                                        routeJob = scope.launch {
+                                            var routeIdx = 0
+                                            var goingForward = true
+
+                                            while (isActive) {
+                                                delay(1000)
+
+                                                if (routeDirection == "loop") {
+                                                    if (goingForward && routeIdx >= routePoints.size - 1) goingForward = false
+                                                    if (!goingForward && routeIdx <= 0) goingForward = true
+                                                } else if (routeIdx >= routePoints.size - 1) {
+                                                    routeStatus = "✅ Route complete!"
+                                                    routeProgress = 1f
+                                                    isRouteRunning = false
+                                                    break
+                                                }
+
+                                                var distToTravel = metersPerSecond
+                                                val step = if (goingForward) 1 else -1
+
+                                                while (distToTravel > 0) {
+                                                    val nextIdx = routeIdx + step
+                                                    if (nextIdx < 0 || nextIdx >= routePoints.size) break
+
+                                                    val curr = routePoints[routeIdx]
+                                                    val next = routePoints[nextIdx]
+                                                    val segDist = haversineMeters(curr.lat, curr.lng, next.lat, next.lng)
+
+                                                    if (segDist <= distToTravel) {
+                                                        distToTravel -= segDist.toFloat()
+                                                        routeIdx = nextIdx
+                                                    } else {
+                                                        distToTravel = 0f
+                                                    }
+                                                }
+
+                                                val pos = routePoints[routeIdx]
+                                                routeProgress = routeIdx.toFloat() / (routePoints.size - 1).toFloat()
+
+                                                // Update the spoofed position
+                                                latitude = pos.lat
+                                                longitude = pos.lng
+                                                prefsManager.setLocation(pos.lat, pos.lng, 10f, "🛣️ Route Sim")
+                                                SpoofService.updateSpoof(context, pos.lat, pos.lng, 10f)
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                enabled = !isRouteRunning || isRoutePaused,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Green)
+                            ) {
+                                Text(if (isRoutePaused) "▶️" else "▶️ Start", fontSize = 12.sp)
+                            }
+
+                            Button(
+                                onClick = {
+                                    routeJob?.cancel()
+                                    isRoutePaused = true
+                                    routeStatus = "Paused"
+                                },
+                                modifier = Modifier.weight(1f),
+                                enabled = isRouteRunning && !isRoutePaused,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Amber)
+                            ) {
+                                Text("⏸️", fontSize = 12.sp)
+                            }
+
+                            Button(
+                                onClick = {
+                                    routeJob?.cancel()
+                                    isRouteRunning = false
+                                    isRoutePaused = false
+                                    routeProgress = 0f
+                                    routeStatus = "Stopped"
+                                },
+                                modifier = Modifier.weight(1f),
+                                enabled = isRouteRunning,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Red)
+                            ) {
+                                Text("⏹️ Stop", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(80.dp)) // Bottom padding for FABs
         }
 
@@ -531,4 +805,15 @@ fun MainScreen(
             }
         }
     }
+}
+
+// ── Haversine Distance ──
+private fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val r = 6371000.0
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = sin(dLat / 2).pow(2) +
+            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+            sin(dLon / 2).pow(2)
+    return r * 2 * atan2(sqrt(a), sqrt(1 - a))
 }

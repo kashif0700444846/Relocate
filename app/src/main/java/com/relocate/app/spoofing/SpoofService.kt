@@ -1,5 +1,6 @@
 // [Relocate] [SpoofService.kt] - Foreground Service for Continuous Spoofing
 // Keeps location spoofing active even when the app is in the background.
+// The update loop uses volatile coordinates so updateSpoof() actually changes position.
 
 package com.relocate.app.spoofing
 
@@ -16,6 +17,7 @@ import android.util.Log
 import com.relocate.app.MainActivity
 import com.relocate.app.data.SpoofMode
 import kotlinx.coroutines.*
+import java.util.Locale
 
 class SpoofService : Service() {
 
@@ -69,6 +71,11 @@ class SpoofService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var updateJob: Job? = null
 
+    // Mutable coordinates — updated by updateSpoof(), read by the continuous loop
+    @Volatile private var currentLat = 0.0
+    @Volatile private var currentLng = 0.0
+    @Volatile private var currentAcc = 10f
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -91,7 +98,19 @@ class SpoofService : Service() {
                 val lat = intent.getDoubleExtra(EXTRA_LAT, 0.0)
                 val lng = intent.getDoubleExtra(EXTRA_LNG, 0.0)
                 val acc = intent.getFloatExtra(EXTRA_ACC, 10f)
-                engine?.update(lat, lng, acc)
+
+                // Update the volatile coordinates — the loop will pick them up
+                currentLat = lat
+                currentLng = lng
+                currentAcc = acc
+
+                // Also inject immediately for responsiveness
+                try {
+                    engine?.update(lat, lng, acc)
+                    Log.d(TAG, "[Update] [SUCCESS] Position updated to $lat, $lng")
+                } catch (e: Exception) {
+                    Log.e(TAG, "[Update] [ERROR] ${e.message}")
+                }
             }
             ACTION_STOP -> {
                 stopSpoofing()
@@ -104,6 +123,12 @@ class SpoofService : Service() {
         try {
             // Stop existing engine if any
             engine?.stop()
+            updateJob?.cancel()
+
+            // Set initial coordinates
+            currentLat = lat
+            currentLng = lng
+            currentAcc = accuracy
 
             // Create appropriate engine
             engine = when (mode) {
@@ -115,22 +140,22 @@ class SpoofService : Service() {
             val modeLabel = if (mode == SpoofMode.ROOT) "Root (Undetectable)" else "Standard (Mock)"
             startForeground(NOTIFICATION_ID, buildNotification(
                 "📍 Spoofing Active — $modeLabel",
-                "Location: %.4f, %.4f".format(lat, lng)
+                String.format(Locale.US, "Location: %.4f, %.4f", lat, lng)
             ))
 
             // Start engine
             engine?.start(lat, lng, accuracy)
             Log.i(TAG, "[Start] [SUCCESS] Spoofing started in $mode mode at $lat, $lng")
 
-            // Continuous update loop (re-inject every 2 seconds to keep mock provider alive)
-            updateJob?.cancel()
+            // Continuous update loop — reads volatile coordinates each tick
+            // This means updateSpoof() calls will be reflected in the next tick
             updateJob = serviceScope.launch {
                 while (isActive) {
                     delay(2000)
                     try {
-                        engine?.update(lat, lng, accuracy)
+                        engine?.update(currentLat, currentLng, currentAcc)
                     } catch (e: Exception) {
-                        Log.e(TAG, "[Update] [ERROR] ${e.message}")
+                        Log.e(TAG, "[Loop] [ERROR] ${e.message}")
                     }
                 }
             }

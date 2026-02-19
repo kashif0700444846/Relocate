@@ -1,18 +1,24 @@
 // [Relocate] [MapView.kt] - OSMDroid Map Composable
 // Wraps OSMDroid MapView in Jetpack Compose via AndroidView.
+// Supports: draggable marker, map click, and live GPS tracking overlay.
 
 package com.relocate.app.ui.components
 
-import android.view.MotionEvent
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 
 @Composable
 fun OsmMapView(
@@ -21,19 +27,41 @@ fun OsmMapView(
     longitude: Double,
     onMapClick: ((Double, Double) -> Unit)? = null,
     onMarkerDrag: ((Double, Double) -> Unit)? = null,
-    zoomLevel: Double = 13.0
+    zoomLevel: Double = 13.0,
+    showMyLocation: Boolean = true
 ) {
+    val context = LocalContext.current
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var marker by remember { mutableStateOf<Marker?>(null) }
 
+    val hasLocationPermission = remember {
+        ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     AndroidView(
         modifier = modifier,
-        factory = { context ->
-            MapView(context).apply {
+        factory = { ctx ->
+            MapView(ctx).apply {
                 setTileSource(TileSourceFactory.MAPNIK)
                 setMultiTouchControls(true)
                 controller.setZoom(zoomLevel)
                 controller.setCenter(GeoPoint(latitude, longitude))
+
+                // Live GPS location overlay (blue dot)
+                if (showMyLocation && hasLocationPermission) {
+                    try {
+                        val myLocationOverlay = MyLocationNewOverlay(
+                            GpsMyLocationProvider(ctx), this
+                        )
+                        myLocationOverlay.enableMyLocation()
+                        myLocationOverlay.enableFollowLocation()
+                        overlays.add(myLocationOverlay)
+                    } catch (e: Exception) {
+                        // GPS not available or permission denied — skip
+                    }
+                }
 
                 // Map click listener
                 if (onMapClick != null) {
