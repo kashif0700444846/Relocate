@@ -1,5 +1,6 @@
 // [Relocate] [MockLocationEngine.kt] - Standard Mode (No Root)
-// Uses Android's built-in TestProvider API to provide mock locations.
+// Uses Android TestProvider + Google Play Services FusedLocationProvider
+// for Uber-compatible mock location injection.
 // DETECTABLE: Apps can check Location.isFromMockProvider() or
 //             Settings.Secure.ALLOW_MOCK_LOCATION.
 
@@ -11,13 +12,14 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
 import com.relocate.app.data.SpoofMode
 
 class MockLocationEngine(private val context: Context) : SpoofEngine {
 
     companion object {
         private const val TAG = "MockLocationEngine"
-        private const val PROVIDER_NAME = LocationManager.GPS_PROVIDER
     }
 
     override val mode = SpoofMode.MOCK
@@ -27,21 +29,24 @@ class MockLocationEngine(private val context: Context) : SpoofEngine {
         context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     }
 
+    // FusedLocationProviderClient for Google Play Services (Uber reads this)
+    private var fusedClient: FusedLocationProviderClient? = null
+
     private var isRunning = false
+    private var gpsProviderAdded = false
+    private var networkProviderAdded = false
 
     /**
      * Checks if mock locations are enabled in Developer Options.
      */
     override fun isAvailable(): Boolean {
         return try {
-            // On older APIs, check the global setting
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
                 android.provider.Settings.Secure.getInt(
                     context.contentResolver,
                     android.provider.Settings.Secure.ALLOW_MOCK_LOCATION, 0
                 ) != 0
             } else {
-                // On newer APIs, we try to add a test provider and catch SecurityException
                 true
             }
         } catch (e: Exception) {
@@ -52,28 +57,56 @@ class MockLocationEngine(private val context: Context) : SpoofEngine {
 
     override fun start(lat: Double, lng: Double, accuracy: Float) {
         try {
-            // Remove existing test provider if any
-            try {
-                locationManager.removeTestProvider(PROVIDER_NAME)
-            } catch (e: Exception) {
-                // Ignore — provider might not exist yet
-            }
+            // ── GPS Provider ──
+            try { locationManager.removeTestProvider(LocationManager.GPS_PROVIDER) } catch (_: Exception) {}
 
-            // Add GPS as a test provider
             locationManager.addTestProvider(
-                PROVIDER_NAME,
+                LocationManager.GPS_PROVIDER,
                 false, false, false, false, false,
                 true, true,
                 android.location.provider.ProviderProperties.POWER_USAGE_LOW,
                 android.location.provider.ProviderProperties.ACCURACY_FINE
             )
+            locationManager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true)
+            gpsProviderAdded = true
+            Log.i(TAG, "[Start] [SUCCESS] GPS test provider started")
 
-            locationManager.setTestProviderEnabled(PROVIDER_NAME, true)
+            // ── Network Provider ──
+            // Spoofing network provider ensures FusedLocationProvider sees our location
+            try { locationManager.removeTestProvider(LocationManager.NETWORK_PROVIDER) } catch (_: Exception) {}
+
+            try {
+                locationManager.addTestProvider(
+                    LocationManager.NETWORK_PROVIDER,
+                    false, false, false, false, false,
+                    true, true,
+                    android.location.provider.ProviderProperties.POWER_USAGE_LOW,
+                    android.location.provider.ProviderProperties.ACCURACY_COARSE
+                )
+                locationManager.setTestProviderEnabled(LocationManager.NETWORK_PROVIDER, true)
+                networkProviderAdded = true
+                Log.i(TAG, "[Start] [SUCCESS] Network test provider started")
+            } catch (e: Exception) {
+                Log.w(TAG, "[Start] [WARN] Network provider failed (non-critical): ${e.message}")
+                networkProviderAdded = false
+            }
+
+            // ── FusedLocationProviderClient (Google Play Services) ──
+            // This is what Uber/Lyft/Bolt etc. read for location
+            try {
+                fusedClient = LocationServices.getFusedLocationProviderClient(context)
+                fusedClient?.setMockMode(true)
+                Log.i(TAG, "[Start] [SUCCESS] FusedLocation mock mode enabled")
+            } catch (e: Exception) {
+                Log.w(TAG, "[Start] [WARN] FusedLocation not available: ${e.message}")
+                fusedClient = null
+            }
+
             isRunning = true
-            Log.i(TAG, "[Start] [SUCCESS] Mock provider started")
 
             // Set initial location
             update(lat, lng, accuracy)
+
         } catch (e: SecurityException) {
             Log.e(TAG, "[Start] [ERROR] Mock location not allowed. Enable in Developer Options: ${e.message}")
             isRunning = false
@@ -87,25 +120,29 @@ class MockLocationEngine(private val context: Context) : SpoofEngine {
         if (!isRunning) return
 
         try {
-            val location = Location(PROVIDER_NAME).apply {
-                latitude = lat
-                longitude = lng
-                this.accuracy = accuracy
-                altitude = 0.0
-                bearing = 0f
-                speed = 0f
-                time = System.currentTimeMillis()
-                elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+            val now = System.currentTimeMillis()
+            val elapsedNanos = SystemClock.elapsedRealtimeNanos()
 
-                // Required on newer Android versions
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    bearingAccuracyDegrees = 0.1f
-                    verticalAccuracyMeters = accuracy
-                    speedAccuracyMetersPerSecond = 0.01f
-                }
+            // ── GPS Location ──
+            val gpsLocation = buildLocation(LocationManager.GPS_PROVIDER, lat, lng, accuracy, now, elapsedNanos)
+            if (gpsProviderAdded) {
+                locationManager.setTestProviderLocation(LocationManager.GPS_PROVIDER, gpsLocation)
             }
 
-            locationManager.setTestProviderLocation(PROVIDER_NAME, location)
+            // ── Network Location ──
+            if (networkProviderAdded) {
+                val netLocation = buildLocation(LocationManager.NETWORK_PROVIDER, lat, lng, accuracy * 2f, now, elapsedNanos)
+                locationManager.setTestProviderLocation(LocationManager.NETWORK_PROVIDER, netLocation)
+            }
+
+            // ── FusedLocation (Google Play Services) ──
+            // This feeds directly into FusedLocationProviderClient which Uber reads
+            try {
+                fusedClient?.setMockLocation(gpsLocation)
+            } catch (e: Exception) {
+                Log.w(TAG, "[Update] [WARN] FusedLocation mock failed: ${e.message}")
+            }
+
         } catch (e: Exception) {
             Log.e(TAG, "[Update] [ERROR] ${e.message}")
         }
@@ -114,14 +151,65 @@ class MockLocationEngine(private val context: Context) : SpoofEngine {
     override fun stop() {
         try {
             if (isRunning) {
-                locationManager.setTestProviderEnabled(PROVIDER_NAME, false)
-                locationManager.removeTestProvider(PROVIDER_NAME)
+                // Remove GPS provider
+                if (gpsProviderAdded) {
+                    try {
+                        locationManager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, false)
+                        locationManager.removeTestProvider(LocationManager.GPS_PROVIDER)
+                    } catch (_: Exception) {}
+                    gpsProviderAdded = false
+                }
+
+                // Remove Network provider
+                if (networkProviderAdded) {
+                    try {
+                        locationManager.setTestProviderEnabled(LocationManager.NETWORK_PROVIDER, false)
+                        locationManager.removeTestProvider(LocationManager.NETWORK_PROVIDER)
+                    } catch (_: Exception) {}
+                    networkProviderAdded = false
+                }
+
+                // Disable FusedLocation mock
+                try {
+                    fusedClient?.setMockMode(false)
+                } catch (_: Exception) {}
+                fusedClient = null
+
                 isRunning = false
-                Log.i(TAG, "[Stop] [SUCCESS] Mock provider removed")
+                Log.i(TAG, "[Stop] [SUCCESS] All mock providers removed")
             }
         } catch (e: Exception) {
             Log.w(TAG, "[Stop] [WARN] ${e.message}")
             isRunning = false
+        }
+    }
+
+    /**
+     * Builds a realistic Location object for the given provider.
+     */
+    private fun buildLocation(
+        provider: String,
+        lat: Double,
+        lng: Double,
+        accuracy: Float,
+        timeMs: Long,
+        elapsedNanos: Long
+    ): Location {
+        return Location(provider).apply {
+            latitude = lat
+            longitude = lng
+            this.accuracy = accuracy
+            altitude = 0.0
+            bearing = 0f
+            speed = 0f
+            time = timeMs
+            elapsedRealtimeNanos = elapsedNanos
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                bearingAccuracyDegrees = 0.1f
+                verticalAccuracyMeters = accuracy
+                speedAccuracyMetersPerSecond = 0.01f
+            }
         }
     }
 }

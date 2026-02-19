@@ -1,6 +1,6 @@
 // [Relocate] [SpoofService.kt] - Foreground Service for Continuous Spoofing
 // Keeps location spoofing active even when the app is in the background.
-// The update loop uses volatile coordinates so updateSpoof() actually changes position.
+// Features: live coordinate notification, Stop action button, volatile coordinates.
 
 package com.relocate.app.spoofing
 
@@ -9,6 +9,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -33,6 +34,7 @@ class SpoofService : Service() {
         private const val ACTION_START = "com.relocate.START_SPOOF"
         private const val ACTION_UPDATE = "com.relocate.UPDATE_SPOOF"
         private const val ACTION_STOP = "com.relocate.STOP_SPOOF"
+        const val ACTION_STOP_FROM_NOTIFICATION = "com.relocate.STOP_SPOOF_NOTIFICATION"
 
         fun startSpoof(context: Context, lat: Double, lng: Double, accuracy: Float, mode: SpoofMode) {
             val intent = Intent(context, SpoofService::class.java).apply {
@@ -76,6 +78,9 @@ class SpoofService : Service() {
     @Volatile private var currentLng = 0.0
     @Volatile private var currentAcc = 10f
 
+    // Keeps track of current mode for notification
+    private var currentModeLabel = "Standard"
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -111,8 +116,11 @@ class SpoofService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "[Update] [ERROR] ${e.message}")
                 }
+
+                // Update notification with new coordinates
+                updateNotification(lat, lng)
             }
-            ACTION_STOP -> {
+            ACTION_STOP, ACTION_STOP_FROM_NOTIFICATION -> {
                 stopSpoofing()
             }
         }
@@ -136,11 +144,13 @@ class SpoofService : Service() {
                 SpoofMode.MOCK -> MockLocationEngine(this)
             }
 
-            // Start foreground notification
-            val modeLabel = if (mode == SpoofMode.ROOT) "Root (Undetectable)" else "Standard (Mock)"
+            // Track mode label for notifications
+            currentModeLabel = if (mode == SpoofMode.ROOT) "Root" else "Standard"
+
+            // Start foreground notification with Stop action
             startForeground(NOTIFICATION_ID, buildNotification(
-                "📍 Spoofing Active — $modeLabel",
-                String.format(Locale.US, "Location: %.4f, %.4f", lat, lng)
+                "📍 Spoofing Active — $currentModeLabel",
+                String.format(Locale.US, "%.6f, %.6f", lat, lng)
             ))
 
             // Start engine
@@ -148,7 +158,6 @@ class SpoofService : Service() {
             Log.i(TAG, "[Start] [SUCCESS] Spoofing started in $mode mode at $lat, $lng")
 
             // Continuous update loop — reads volatile coordinates each tick
-            // This means updateSpoof() calls will be reflected in the next tick
             updateJob = serviceScope.launch {
                 while (isActive) {
                     delay(2000)
@@ -162,6 +171,22 @@ class SpoofService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "[Start] [ERROR] Failed to start spoofing: ${e.message}", e)
             stopSpoofing()
+        }
+    }
+
+    /**
+     * Updates the foreground notification with current coordinates.
+     */
+    private fun updateNotification(lat: Double, lng: Double) {
+        try {
+            val notification = buildNotification(
+                "📍 Spoofing Active — $currentModeLabel",
+                String.format(Locale.US, "%.6f, %.6f", lat, lng)
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.notify(NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "[Notification] [WARN] ${e.message}")
         }
     }
 
@@ -190,19 +215,38 @@ class SpoofService : Service() {
     }
 
     private fun buildNotification(title: String, content: String): Notification {
-        val pendingIntent = PendingIntent.getActivity(
+        // Tap action — opens the app
+        val openIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        return Notification.Builder(this, CHANNEL_ID)
+        // Stop action — stops spoofing from notification
+        val stopIntent = Intent(this, SpoofService::class.java).apply {
+            action = ACTION_STOP_FROM_NOTIFICATION
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 1, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(openIntent)
             .setOngoing(true)
-            .build()
+
+        // Add Stop action button
+        val stopAction = Notification.Action.Builder(
+            android.R.drawable.ic_media_pause,
+            "Stop Spoofing",
+            stopPendingIntent
+        ).build()
+        builder.addAction(stopAction)
+
+        return builder.build()
     }
 
     override fun onDestroy() {
