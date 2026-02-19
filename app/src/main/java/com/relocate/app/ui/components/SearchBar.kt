@@ -147,7 +147,7 @@ private fun SearchResultItem(
             }
         }
     }
-    HorizontalDivider(
+    Divider(
         color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
     )
 }

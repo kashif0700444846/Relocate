@@ -121,7 +121,7 @@ fun SettingsScreen(
                 scope.launch { prefsManager.setShowRecent(it) }
             }
 
-            HorizontalDivider()
+            Divider()
 
             // ════════════════════════════════════════
             // SECTION: PRESETS MANAGER
@@ -257,7 +257,7 @@ fun SettingsScreen(
                 }
             }
 
-            HorizontalDivider()
+            Divider()
 
             // ════════════════════════════════════════
             // SECTION: ROUTE SIMULATION
@@ -401,7 +401,7 @@ fun SettingsScreen(
             // Progress bar
             Column {
                 LinearProgressIndicator(
-                    progress = { routeProgress },
+                    progress = routeProgress,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(6.dp),
