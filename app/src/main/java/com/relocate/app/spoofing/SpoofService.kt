@@ -15,9 +15,12 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.location.LocationListener
+import android.location.LocationManager
 import com.relocate.app.MainActivity
 import com.relocate.app.data.SpoofMode
 import com.relocate.app.xposed.UberLocationHook
+import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.*
 import java.util.Locale
 
@@ -205,8 +208,48 @@ class SpoofService : Service() {
         // Clear SharedPrefs so UberLocationHook stops injecting fake coords
         clearSpoofCoords()
         Log.i(TAG, "[Stop] [SUCCESS] Spoofing stopped")
+        // Restore the real location immediately
+        restoreRealLocation()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * Called after stopping spoofing to restore the device's real GPS location.
+     * 1. Disables FusedLocation mock mode (otherwise GPS stays stuck on last fake coords)
+     * 2. Forces a one-shot real GPS fix and logs it so the system has fresh real data
+     */
+    private fun restoreRealLocation() {
+        try {
+            // 1. Disable FusedLocation mock mode — this un-freezes the fused provider
+            val fusedClient = LocationServices.getFusedLocationProviderClient(this)
+            fusedClient.setMockMode(false)
+                .addOnSuccessListener {
+                    Log.i(TAG, "[Restore] [SUCCESS] FusedLocation mock mode disabled — real GPS active")
+                }
+                .addOnFailureListener { e ->
+                    Log.w(TAG, "[Restore] [WARN] setMockMode(false) failed: ${e.message}")
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "[Restore] [WARN] FusedClient restore failed: ${e.message}")
+        }
+
+        try {
+            // 2. Request a fresh GPS fix from the system provider
+            // This wakes up the GPS chipset immediately after mock mode ends
+            val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val listener = object : LocationListener {
+                override fun onLocationChanged(location: android.location.Location) {
+                    Log.i(TAG, "[Restore] [SUCCESS] Real GPS fix obtained: ${location.latitude}, ${location.longitude}")
+                    try { locationManager.removeUpdates(this) } catch (_: Exception) {}
+                }
+            }
+            @Suppress("MissingPermission")
+            locationManager.requestSingleUpdate(LocationManager.GPS_PROVIDER, listener, mainLooper)
+            Log.i(TAG, "[Restore] [INFO] Requested single real GPS update from system")
+        } catch (e: Exception) {
+            Log.w(TAG, "[Restore] [WARN] Single GPS request failed: ${e.message}")
+        }
     }
 
     /**

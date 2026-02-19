@@ -8,9 +8,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -109,7 +107,7 @@ fun SearchBar(
                         )
                         // Divider between items (except after last)
                         if (index < results.size - 1) {
-                            HorizontalDivider(
+                            Divider(
                                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                                 thickness = 0.5.dp
                             )
