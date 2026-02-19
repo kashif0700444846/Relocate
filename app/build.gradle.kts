@@ -12,8 +12,8 @@ android {
         applicationId = "com.relocate.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -88,6 +88,10 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // XPosed API — LSPosed module (compile-only, NOT bundled in APK)
+    // This allows Relocate to hook into com.ubercab.driver via LSPosed framework
+    compileOnly("de.robv.android.xposed:api:82")
 
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")

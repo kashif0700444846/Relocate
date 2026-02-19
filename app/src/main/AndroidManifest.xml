@@ -52,6 +52,22 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <!-- ==========================================
+             LSPOSED MODULE DECLARATIONS
+             Registers this app as an LSPosed module.
+             Must be enabled for com.ubercab.driver in
+             LSPosed Manager after install + reboot.
+             ========================================== -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="Uber Driver Location Bypass — Hooks mock detection inside com.ubercab.driver" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93" />
+
     </application>
 
 </manifest>

@@ -17,6 +17,7 @@ import android.os.IBinder
 import android.util.Log
 import com.relocate.app.MainActivity
 import com.relocate.app.data.SpoofMode
+import com.relocate.app.xposed.UberLocationHook
 import kotlinx.coroutines.*
 import java.util.Locale
 
@@ -109,6 +110,9 @@ class SpoofService : Service() {
                 currentLng = lng
                 currentAcc = acc
 
+                // Write to SharedPrefs so UberLocationHook can read cross-process
+                writeSpoofCoords(lat, lng)
+
                 // Also inject immediately for responsiveness
                 try {
                     engine?.update(lat, lng, acc)
@@ -155,6 +159,10 @@ class SpoofService : Service() {
 
             // Start engine
             engine?.start(lat, lng, accuracy)
+
+            // Write to SharedPrefs so UberLocationHook (in Uber's process) can read
+            writeSpoofCoords(lat, lng)
+
             Log.i(TAG, "[Start] [SUCCESS] Spoofing started in $mode mode at $lat, $lng")
 
             // Continuous update loop — reads volatile coordinates each tick
@@ -194,9 +202,49 @@ class SpoofService : Service() {
         updateJob?.cancel()
         engine?.stop()
         engine = null
+        // Clear SharedPrefs so UberLocationHook stops injecting fake coords
+        clearSpoofCoords()
         Log.i(TAG, "[Stop] [SUCCESS] Spoofing stopped")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * Writes the current spoof coordinates to SharedPreferences.
+     * UberLocationHook reads these from the Uber Driver process via XSharedPreferences.
+     * Uses Double.toBits() to store full double precision (Float would lose GPS decimals).
+     */
+    @Suppress("CommitPrefEdits")
+    private fun writeSpoofCoords(lat: Double, lng: Double) {
+        try {
+            getSharedPreferences(UberLocationHook.PREFS_NAME, MODE_PRIVATE).edit().apply {
+                putBoolean(UberLocationHook.KEY_ACTIVE, true)
+                putLong(UberLocationHook.KEY_LAT, lat.toBits())
+                putLong(UberLocationHook.KEY_LNG, lng.toBits())
+                apply()
+            }
+            Log.d(TAG, "[SpoofPrefs] [WRITE] lat=$lat lng=$lng written for XPosed hook")
+        } catch (e: Exception) {
+            Log.e(TAG, "[SpoofPrefs] [ERROR] Failed to write spoof prefs: ${e.message}")
+        }
+    }
+
+    /**
+     * Clears the spoof prefs — the UberLocationHook will stop injecting fake coords.
+     */
+    @Suppress("CommitPrefEdits")
+    private fun clearSpoofCoords() {
+        try {
+            getSharedPreferences(UberLocationHook.PREFS_NAME, MODE_PRIVATE).edit().apply {
+                putBoolean(UberLocationHook.KEY_ACTIVE, false)
+                remove(UberLocationHook.KEY_LAT)
+                remove(UberLocationHook.KEY_LNG)
+                apply()
+            }
+            Log.d(TAG, "[SpoofPrefs] [CLEAR] Spoof prefs cleared")
+        } catch (e: Exception) {
+            Log.e(TAG, "[SpoofPrefs] [ERROR] Failed to clear spoof prefs: ${e.message}")
+        }
     }
 
     private fun createNotificationChannel() {
