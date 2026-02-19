@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [Relocate] Launcher Icon Foreground - Location Pin -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Location pin shape centered in adaptive icon safe zone -->
+    <group
+        android:translateX="27"
+        android:translateY="22">
+        <!-- Pin body -->
+        <path
+            android:fillColor="#F59E0B"
+            android:pathData="M27,0C12.09,0 0,12.09 0,27C0,47.25 27,64 27,64C27,64 54,47.25 54,27C54,12.09 41.91,0 27,0Z"/>
+        <!-- Inner circle -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M27,13.5C19.54,13.5 13.5,19.54 13.5,27C13.5,34.46 19.54,40.5 27,40.5C34.46,40.5 40.5,34.46 40.5,27C40.5,19.54 34.46,13.5 27,13.5ZM27,35.1C22.52,35.1 18.9,31.48 18.9,27C18.9,22.52 22.52,18.9 27,18.9C31.48,18.9 35.1,22.52 35.1,27C35.1,31.48 31.48,35.1 27,35.1Z"/>
+    </group>
+</vector>

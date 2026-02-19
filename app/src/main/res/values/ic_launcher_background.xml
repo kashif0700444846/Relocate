@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [Relocate] Launcher Icon Colors -->
+<resources>
+    <color name="ic_launcher_background">#0A0A1A</color>
+</resources>
