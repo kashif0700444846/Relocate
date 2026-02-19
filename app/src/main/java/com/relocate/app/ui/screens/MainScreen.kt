@@ -537,7 +537,7 @@ fun MainScreen(
 
                         // Progress bar
                         LinearProgressIndicator(
-                            progress = { routeProgress },
+                            progress = routeProgress,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(6.dp),
