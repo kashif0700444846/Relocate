@@ -1,5 +1,6 @@
 // [Relocate] [SearchBar.kt] - Address Search with Autocomplete
 // Uses Nominatim API for live address suggestions.
+// v1.3.1 fix: replaced LazyColumn with Column (LazyColumn inside verticalScroll crashes).
 
 package com.relocate.app.ui.components
 
@@ -7,16 +8,15 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,12 +49,14 @@ fun SearchBar(
                     searchJob = scope.launch {
                         delay(350) // Debounce
                         isSearching = true
+                        showDropdown = true  // Show loading spinner immediately
                         results = NominatimApi.search(newQuery)
                         showDropdown = results.isNotEmpty()
                         isSearching = false
                     }
                 } else {
                     showDropdown = false
+                    isSearching = false
                     results = emptyList()
                 }
             },
@@ -63,6 +65,15 @@ fun SearchBar(
             },
             leadingIcon = {
                 Icon(Icons.Default.Search, contentDescription = "Search")
+            },
+            trailingIcon = {
+                if (isSearching) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             },
             singleLine = true,
             shape = RoundedCornerShape(12.dp),
@@ -74,40 +85,33 @@ fun SearchBar(
         )
 
         // Autocomplete dropdown
-        AnimatedVisibility(visible = showDropdown) {
+        // FIX: Use Column (NOT LazyColumn) — LazyColumn inside verticalScroll crashes.
+        // The result set is always ≤ 6 items (Nominatim limit=6), so Column is fine.
+        AnimatedVisibility(visible = showDropdown && results.isNotEmpty()) {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 250.dp),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
-                if (isSearching) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary
+                Column {
+                    results.forEachIndexed { index, result ->
+                        SearchResultItem(
+                            result = result,
+                            onClick = {
+                                query = result.name
+                                showDropdown = false
+                                results = emptyList()
+                                onLocationSelected(result)
+                            }
                         )
-                    }
-                } else {
-                    LazyColumn {
-                        itemsIndexed(results) { _, result ->
-                            SearchResultItem(
-                                result = result,
-                                onClick = {
-                                    query = result.name
-                                    showDropdown = false
-                                    onLocationSelected(result)
-                                }
+                        // Divider between items (except after last)
+                        if (index < results.size - 1) {
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                thickness = 0.5.dp
                             )
                         }
                     }
@@ -147,7 +151,4 @@ private fun SearchResultItem(
             }
         }
     }
-    Divider(
-        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-    )
 }
