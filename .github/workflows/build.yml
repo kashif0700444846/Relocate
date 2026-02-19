@@ -13,8 +13,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-        permissions:
-              contents: write
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
@@ -35,42 +35,29 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
+      - name: Build with Gradle
         run: ./gradlew assembleDebug
 
-      - name: Upload Debug APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: relocate-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: relocate-app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
 
-      # Create release with APK on tag push
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/*.apk
-          name: "Relocate ${{ github.ref_name }}"
+          files: app/build/outputs/apk/debug/app-debug.apk
+          name: Relocate ${{ github.ref_name }}
           body: |
             ## Relocate ${{ github.ref_name }}
-
-            GPS location spoofing app for Android with route simulation.
-
-            ### Features
-            - **Standard (Mock) Mode** - Uses Android mock location API
-            - **Root Mode** - Undetectable spoofing via root access
-            - **Route Simulation** - Search start/end, pick driving/walking, set speed
-            - **Route Polyline** - Full amber route drawn on map with overview zoom
-            - **Arrow Marker** - Navigation arrow shows travel direction
-            - **Blue Dot GPS** - Google Maps-style current location with pulse ring
-            - **Address Search** - Powered by Nominatim API
-            - **Route Fetching** - Via OSRM public API
-            - **Preset & Recent Locations** - Save and quick-apply spots
-            - **Dark/Light Theme** - Material 3 dynamic theming
-            - **Foreground Service** - Keeps spoofing active in background
-
-            ### Install
-            Download the APK below and install on your Android device.
-          generate_release_notes: false
+            
+            - GPS Spoofing (Standard/Root)
+            - Route Simulation
+            - Live GPS Tracking
+            - Address Search
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
