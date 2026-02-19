@@ -36,6 +36,7 @@ import com.relocate.app.network.LatLng
 import com.relocate.app.network.NominatimApi
 import com.relocate.app.network.OsrmApi
 import com.relocate.app.spoofing.MockLocationEngine
+import org.osmdroid.util.GeoPoint
 import com.relocate.app.spoofing.RootSpoofEngine
 import com.relocate.app.spoofing.SpoofService
 import com.relocate.app.ui.components.*
@@ -94,6 +95,9 @@ fun MainScreen(
     var isRouteRunning by remember { mutableStateOf(false) }
     var isRoutePaused by remember { mutableStateOf(false) }
     var routeJob by remember { mutableStateOf<Job?>(null) }
+    // Route data for MapView (polyline + arrow)
+    var routeGeoPoints by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    var simulationBearing by remember { mutableFloatStateOf(0f) }
 
     // ── Location Permission Launcher ──
     val locationPermissionLauncher = rememberLauncherForActivityResult(
@@ -304,7 +308,10 @@ fun MainScreen(
                         latitude = lat
                         longitude = lng
                         selectedPresetIndex = null
-                    }
+                    },
+                    routePath = routeGeoPoints.ifEmpty { null },
+                    simulationBearing = simulationBearing,
+                    isSimulating = isRouteRunning
                 )
             }
 
@@ -581,8 +588,17 @@ fun MainScreen(
                                             return@launch
                                         }
 
-                                        routeStatus = "Simulating... (${routePoints.size} points)"
-                                        val metersPerSecond = (routeSpeedKmh * 1000) / 3600
+                                        // Draw the full route polyline on the map
+                                        routeGeoPoints = routePoints.map {
+                                            GeoPoint(it.lat, it.lng)
+                                        }
+
+                                        // Wait 3 seconds so user sees the full route overview
+                                        routeStatus = "Showing route (${routePoints.size} points)..."
+                                        delay(3000)
+
+                                        routeStatus = "Simulating..."
+                                        val metersPerSecond = (routeSpeedKmh * 1000.0) / 3600.0
 
                                         // Ensure spoofing is active
                                         prefsManager.setSpoofEnabled(true)
@@ -593,42 +609,61 @@ fun MainScreen(
 
                                         routeJob = scope.launch {
                                             var routeIdx = 0
-                                            var goingForward = true
 
                                             while (isActive) {
                                                 delay(1000)
 
-                                                if (routeDirection == "loop") {
-                                                    if (goingForward && routeIdx >= routePoints.size - 1) goingForward = false
-                                                    if (!goingForward && routeIdx <= 0) goingForward = true
-                                                } else if (routeIdx >= routePoints.size - 1) {
+                                                // Check if route is complete
+                                                if (routeIdx >= routePoints.size - 1) {
                                                     routeStatus = "✅ Route complete!"
                                                     routeProgress = 1f
                                                     isRouteRunning = false
                                                     break
                                                 }
 
-                                                var distToTravel = metersPerSecond
-                                                val step = if (goingForward) 1 else -1
+                                                // Advance along route by speed-based distance
+                                                var distRemaining = metersPerSecond
+                                                val startIdx = routeIdx
 
-                                                while (distToTravel > 0) {
-                                                    val nextIdx = routeIdx + step
-                                                    if (nextIdx < 0 || nextIdx >= routePoints.size) break
-
+                                                while (distRemaining > 0 && routeIdx < routePoints.size - 1) {
                                                     val curr = routePoints[routeIdx]
-                                                    val next = routePoints[nextIdx]
-                                                    val segDist = haversineMeters(curr.lat, curr.lng, next.lat, next.lng)
+                                                    val next = routePoints[routeIdx + 1]
+                                                    val segDist = haversineMeters(
+                                                        curr.lat, curr.lng, next.lat, next.lng
+                                                    )
 
-                                                    if (segDist <= distToTravel) {
-                                                        distToTravel -= segDist.toFloat()
-                                                        routeIdx = nextIdx
+                                                    if (segDist <= distRemaining) {
+                                                        distRemaining -= segDist
+                                                        routeIdx++
                                                     } else {
-                                                        distToTravel = 0f
+                                                        // Partial segment — advance to next point
+                                                        routeIdx++
+                                                        break
                                                     }
+                                                }
+
+                                                // Ensure we always advance at least 1 point
+                                                if (routeIdx == startIdx && routeIdx < routePoints.size - 1) {
+                                                    routeIdx++
                                                 }
 
                                                 val pos = routePoints[routeIdx]
                                                 routeProgress = routeIdx.toFloat() / (routePoints.size - 1).toFloat()
+
+                                                // Compute bearing to next point for arrow direction
+                                                if (routeIdx < routePoints.size - 1) {
+                                                    val nextPt = routePoints[routeIdx + 1]
+                                                    simulationBearing = computeBearing(
+                                                        pos.lat, pos.lng, nextPt.lat, nextPt.lng
+                                                    )
+                                                }
+
+                                                routeStatus = String.format(
+                                                    Locale.US,
+                                                    "Simulating... %d/%d (%.0f%%)",
+                                                    routeIdx, routePoints.size - 1,
+                                                    routeProgress * 100
+                                                )
 
                                                 // Update the spoofed position
                                                 latitude = pos.lat
@@ -668,6 +703,8 @@ fun MainScreen(
                                     isRoutePaused = false
                                     routeProgress = 0f
                                     routeStatus = "Stopped"
+                                    routeGeoPoints = emptyList() // clear polyline
+                                    simulationBearing = 0f
                                 },
                                 modifier = Modifier.weight(1f),
                                 enabled = isRouteRunning,
@@ -816,4 +853,14 @@ private fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Doub
             cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
             sin(dLon / 2).pow(2)
     return r * 2 * atan2(sqrt(a), sqrt(1 - a))
+}
+
+// ── Compute Bearing (degrees clockwise from north) ──
+private fun computeBearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+    val dLon = Math.toRadians(lon2 - lon1)
+    val lat1Rad = Math.toRadians(lat1)
+    val lat2Rad = Math.toRadians(lat2)
+    val y = sin(dLon) * cos(lat2Rad)
+    val x = cos(lat1Rad) * sin(lat2Rad) - sin(lat1Rad) * cos(lat2Rad) * cos(dLon)
+    return ((Math.toDegrees(atan2(y, x)) + 360) % 360).toFloat()
 }
