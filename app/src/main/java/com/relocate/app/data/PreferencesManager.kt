@@ -27,6 +27,7 @@ class PreferencesManager(private val context: Context) {
         private val SHOW_COORDS = booleanPreferencesKey("show_coords")
         private val SHOW_PRESETS = booleanPreferencesKey("show_presets")
         private val SHOW_RECENT = booleanPreferencesKey("show_recent")
+        private val SHOW_ROUTE_SIM = booleanPreferencesKey("show_route_sim")
     }
 
     // ── Flows for reactive UI ──
@@ -43,6 +44,7 @@ class PreferencesManager(private val context: Context) {
     val showCoords: Flow<Boolean> = context.dataStore.data.map { it[SHOW_COORDS] ?: true }
     val showPresets: Flow<Boolean> = context.dataStore.data.map { it[SHOW_PRESETS] ?: true }
     val showRecent: Flow<Boolean> = context.dataStore.data.map { it[SHOW_RECENT] ?: true }
+    val showRouteSim: Flow<Boolean> = context.dataStore.data.map { it[SHOW_ROUTE_SIM] ?: false }
 
     // ── Setters ──
 
@@ -82,4 +84,5 @@ class PreferencesManager(private val context: Context) {
     suspend fun setShowCoords(show: Boolean) { context.dataStore.edit { it[SHOW_COORDS] = show } }
     suspend fun setShowPresets(show: Boolean) { context.dataStore.edit { it[SHOW_PRESETS] = show } }
     suspend fun setShowRecent(show: Boolean) { context.dataStore.edit { it[SHOW_RECENT] = show } }
+    suspend fun setShowRouteSim(show: Boolean) { context.dataStore.edit { it[SHOW_ROUTE_SIM] = show } }
 }

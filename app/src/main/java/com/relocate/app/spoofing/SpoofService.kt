@@ -101,33 +101,42 @@ class SpoofService : Service() {
     }
 
     private fun startSpoofing(lat: Double, lng: Double, accuracy: Float, mode: SpoofMode) {
-        // Stop existing engine if any
-        engine?.stop()
+        try {
+            // Stop existing engine if any
+            engine?.stop()
 
-        // Create appropriate engine
-        engine = when (mode) {
-            SpoofMode.ROOT -> RootSpoofEngine(this)
-            SpoofMode.MOCK -> MockLocationEngine(this)
-        }
-
-        // Start foreground notification
-        val modeLabel = if (mode == SpoofMode.ROOT) "Root (Undetectable)" else "Standard (Mock)"
-        startForeground(NOTIFICATION_ID, buildNotification(
-            "📍 Spoofing Active — $modeLabel",
-            "Location: %.4f, %.4f".format(lat, lng)
-        ))
-
-        // Start engine
-        engine?.start(lat, lng, accuracy)
-        Log.i(TAG, "[Start] [SUCCESS] Spoofing started in $mode mode at $lat, $lng")
-
-        // Continuous update loop (re-inject every 2 seconds to keep mock provider alive)
-        updateJob?.cancel()
-        updateJob = serviceScope.launch {
-            while (isActive) {
-                delay(2000)
-                engine?.update(lat, lng, accuracy)
+            // Create appropriate engine
+            engine = when (mode) {
+                SpoofMode.ROOT -> RootSpoofEngine(this)
+                SpoofMode.MOCK -> MockLocationEngine(this)
             }
+
+            // Start foreground notification
+            val modeLabel = if (mode == SpoofMode.ROOT) "Root (Undetectable)" else "Standard (Mock)"
+            startForeground(NOTIFICATION_ID, buildNotification(
+                "📍 Spoofing Active — $modeLabel",
+                "Location: %.4f, %.4f".format(lat, lng)
+            ))
+
+            // Start engine
+            engine?.start(lat, lng, accuracy)
+            Log.i(TAG, "[Start] [SUCCESS] Spoofing started in $mode mode at $lat, $lng")
+
+            // Continuous update loop (re-inject every 2 seconds to keep mock provider alive)
+            updateJob?.cancel()
+            updateJob = serviceScope.launch {
+                while (isActive) {
+                    delay(2000)
+                    try {
+                        engine?.update(lat, lng, accuracy)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "[Update] [ERROR] ${e.message}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "[Start] [ERROR] Failed to start spoofing: ${e.message}", e)
+            stopSpoofing()
         }
     }
 

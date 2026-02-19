@@ -33,6 +33,7 @@ import com.relocate.app.ui.components.OsmMapView
 import com.relocate.app.ui.components.SearchBar
 import com.relocate.app.ui.theme.*
 import kotlinx.coroutines.*
+import java.util.Locale
 import kotlin.math.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,6 +122,12 @@ fun SettingsScreen(
                 scope.launch { prefsManager.setShowRecent(it) }
             }
 
+            // Route Simulation toggle
+            val showRouteSim by prefsManager.showRouteSim.collectAsState(initial = false)
+            SettingsToggle("Show Route Simulation", "Route simulation controls on main screen", showRouteSim) {
+                scope.launch { prefsManager.setShowRouteSim(it) }
+            }
+
             Divider()
 
             // ════════════════════════════════════════
@@ -183,8 +190,8 @@ fun SettingsScreen(
                     SearchBar(
                         onLocationSelected = { result ->
                             newPresetName = result.name
-                            newPresetLat = "%.6f".format(result.lat)
-                            newPresetLng = "%.6f".format(result.lng)
+                            newPresetLat = String.format(Locale.US, "%.6f", result.lat)
+                            newPresetLng = String.format(Locale.US, "%.6f", result.lng)
                         }
                     )
 
@@ -228,8 +235,8 @@ fun SettingsScreen(
 
                     Button(
                         onClick = {
-                            val lat = newPresetLat.toDoubleOrNull()
-                            val lng = newPresetLng.toDoubleOrNull()
+                            val lat = newPresetLat.replace(",", ".").trim().toDoubleOrNull()
+                            val lng = newPresetLng.replace(",", ".").trim().toDoubleOrNull()
                             if (newPresetName.isBlank()) {
                                 Toast.makeText(context, "Enter a name", Toast.LENGTH_SHORT).show()
                                 return@Button
