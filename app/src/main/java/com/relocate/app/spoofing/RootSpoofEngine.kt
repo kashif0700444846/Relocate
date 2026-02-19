@@ -122,7 +122,14 @@ class RootSpoofEngine(private val context: Context) : SpoofEngine {
             try {
                 fusedClient = LocationServices.getFusedLocationProviderClient(context)
                 fusedClient?.setMockMode(true)
-                Log.i(TAG, "[Start] [SUCCESS] FusedLocation mock mode enabled")
+                    ?.addOnSuccessListener {
+                        Log.i(TAG, "[Start] [SUCCESS] FusedLocation setMockMode(true) confirmed by Play Services")
+                    }
+                    ?.addOnFailureListener { e ->
+                        Log.e(TAG, "[Start] [ERROR] FusedLocation setMockMode FAILED: ${e.message}")
+                        Log.e(TAG, "[Start] [ERROR] *** Is Relocate set as Mock Location App in Developer Options? ***")
+                        fusedClient = null
+                    }
             } catch (e: Exception) {
                 Log.w(TAG, "[Start] [WARN] FusedLocation not available: ${e.message}")
                 fusedClient = null
@@ -164,6 +171,9 @@ class RootSpoofEngine(private val context: Context) : SpoofEngine {
             // ── FusedLocation (Google Play Services — what Uber reads) ──
             try {
                 fusedClient?.setMockLocation(gpsLocation)
+                    ?.addOnFailureListener { e ->
+                        Log.e(TAG, "[Update] [ERROR] setMockLocation FAILED: ${e.message}")
+                    }
             } catch (e: Exception) {
                 Log.w(TAG, "[Update] [WARN] FusedLocation mock failed: ${e.message}")
             }
