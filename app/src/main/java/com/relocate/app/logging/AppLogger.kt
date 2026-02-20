@@ -6,7 +6,6 @@
 
 package com.relocate.app.logging
 
-import android.os.Environment
 import android.util.Log
 import com.relocate.app.SpoofConstants
 import java.io.File
@@ -155,8 +154,10 @@ object AppLogger {
     }
 
     private fun getHookLogFile(): File {
-        val logDir = File(Environment.getExternalStorageDirectory(), "Relocate")
-        return File(logDir, SpoofConstants.HOOK_LOG_FILENAME)
+        // Must match the path where UberLocationHook.writeHookLog() writes.
+        // /data/local/tmp/ is world-writable on rooted devices, so both the
+        // hooked app process (writer) and Relocate (reader) can access it.
+        return File("/data/local/tmp", SpoofConstants.HOOK_LOG_FILENAME)
     }
 
     private fun parseHookLogLine(line: String): HookEntry? {

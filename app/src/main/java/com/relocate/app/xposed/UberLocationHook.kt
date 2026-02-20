@@ -156,9 +156,10 @@ class UberLocationHook : IXposedHookLoadPackage {
 
     private fun writeHookLog(hookId: String, details: String) {
         try {
-            val logDir = File(Environment.getExternalStorageDirectory(), "Relocate")
-            if (!logDir.exists()) logDir.mkdirs()
-            val logFile = File(logDir, com.relocate.app.SpoofConstants.HOOK_LOG_FILENAME)
+            // Use /data/local/tmp/ — this is world-writable on rooted devices.
+            // /sdcard/ won't work because the hooked app (e.g., Uber Driver)
+            // doesn't have MANAGE_EXTERNAL_STORAGE permission.
+            val logFile = File("/data/local/tmp", com.relocate.app.SpoofConstants.HOOK_LOG_FILENAME)
 
             val timestamp = hookLogDateFormat.format(System.currentTimeMillis())
             val line = "$timestamp|$currentProcessName|$hookId|$details\n"
