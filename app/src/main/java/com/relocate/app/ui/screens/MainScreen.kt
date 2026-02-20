@@ -768,7 +768,7 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 // Apply Button
                 Button(
@@ -843,7 +843,163 @@ fun MainScreen(
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Amber)
                 ) {
-                    Text("✅ Apply", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                    Text("✅ Apply", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimary)
+                }
+
+                // ── DRIVE BACK BUTTON ──
+                // Simulates driving from current spoofed position back to real GPS
+                // so apps don't detect a sudden location jump
+                Button(
+                    onClick = {
+                        if (!isSpoofEnabled) {
+                            Toast.makeText(context, "Spoofing is not active", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        // Get real GPS position
+                        val locMgr = try {
+                            context.getSystemService(android.content.Context.LOCATION_SERVICE) as LocationManager
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Cannot access GPS", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        @Suppress("MissingPermission")
+                        val realLoc = locMgr.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                            ?: locMgr.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+
+                        if (realLoc == null) {
+                            Toast.makeText(context, "❌ Cannot get real GPS position", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        val fromLat = latitude   // Current spoofed position
+                        val fromLng = longitude
+                        val toLat = realLoc.latitude  // Real GPS
+                        val toLng = realLoc.longitude
+
+                        // Don't drive back if already close (< 50m)
+                        val distMeters = haversineMeters(fromLat, fromLng, toLat, toLng)
+                        if (distMeters < 50) {
+                            // Close enough — just stop spoofing
+                            scope.launch {
+                                prefsManager.setSpoofEnabled(false)
+                                SpoofService.stopSpoof(context)
+                                hasLoadedGps = false
+                            }
+                            Toast.makeText(context, "📍 Already near real location — GPS restored", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        Toast.makeText(context, "🚗 Driving back (${(distMeters / 1000).toInt()}km)...", Toast.LENGTH_SHORT).show()
+
+                        scope.launch {
+                            try {
+                                routeStatus = "Fetching return route..."
+                                isRouteRunning = true
+
+                                val waypoints = listOf(
+                                    LatLng(fromLat, fromLng),
+                                    LatLng(toLat, toLng)
+                                )
+
+                                val driveBackPoints = OsrmApi.getRoute(waypoints, "driving")
+                                if (driveBackPoints == null || driveBackPoints.size < 2) {
+                                    routeStatus = "❌ No route found"
+                                    isRouteRunning = false
+                                    Toast.makeText(context, "❌ Could not find a route back", Toast.LENGTH_SHORT).show()
+                                    return@launch
+                                }
+
+                                // Draw route on map
+                                routeGeoPoints = driveBackPoints.map { GeoPoint(it.lat, it.lng) }
+
+                                // Brief overview of route
+                                routeStatus = "Drive Back: ${driveBackPoints.size} points"
+                                delay(2000)
+
+                                // Use 80 km/h for drive back (natural highway speed)
+                                val metersPerSecond = (80.0 * 1000.0) / 3600.0
+                                routeStatus = "Driving back..."
+
+                                routeJob = scope.launch {
+                                    var idx = 0
+
+                                    while (isActive) {
+                                        delay(1000)
+
+                                        if (idx >= driveBackPoints.size - 1) {
+                                            // ARRIVED — auto-stop spoofing
+                                            routeStatus = "✅ Arrived — Real GPS restored"
+                                            routeProgress = 1f
+                                            isRouteRunning = false
+                                            routeGeoPoints = emptyList()
+                                            simulationBearing = 0f
+
+                                            // Restore real location
+                                            prefsManager.setSpoofEnabled(false)
+                                            SpoofService.stopSpoof(context)
+                                            latitude = toLat
+                                            longitude = toLng
+                                            hasLoadedGps = false
+                                            selectedPresetIndex = null
+                                            break
+                                        }
+
+                                        // Advance along route by distance
+                                        var distRemaining = metersPerSecond
+                                        val startIdx = idx
+
+                                        while (distRemaining > 0 && idx < driveBackPoints.size - 1) {
+                                            val curr = driveBackPoints[idx]
+                                            val next = driveBackPoints[idx + 1]
+                                            val segDist = haversineMeters(curr.lat, curr.lng, next.lat, next.lng)
+
+                                            if (segDist <= distRemaining) {
+                                                distRemaining -= segDist
+                                                idx++
+                                            } else {
+                                                idx++
+                                                break
+                                            }
+                                        }
+
+                                        if (idx == startIdx && idx < driveBackPoints.size - 1) idx++
+
+                                        val pos = driveBackPoints[idx]
+                                        routeProgress = idx.toFloat() / (driveBackPoints.size - 1).toFloat()
+
+                                        // Bearing for arrow
+                                        if (idx < driveBackPoints.size - 1) {
+                                            val nextPt = driveBackPoints[idx + 1]
+                                            simulationBearing = computeBearing(pos.lat, pos.lng, nextPt.lat, nextPt.lng)
+                                        }
+
+                                        routeStatus = String.format(
+                                            Locale.US, "🚗 Driving back... %d%% (%d/%d)",
+                                            (routeProgress * 100).toInt(), idx, driveBackPoints.size - 1
+                                        )
+
+                                        // Move spoofed position along route
+                                        latitude = pos.lat
+                                        longitude = pos.lng
+                                        prefsManager.setLocation(pos.lat, pos.lng, 10f, "🚗 Driving Back")
+                                        SpoofService.updateSpoof(context, pos.lat, pos.lng, 10f)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                routeStatus = "❌ Drive back failed"
+                                isRouteRunning = false
+                                Toast.makeText(context, "❌ Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    enabled = isSpoofEnabled && !isRouteRunning,
+                    colors = ButtonDefaults.buttonColors(containerColor = Green)
+                ) {
+                    Text("🚗 Back", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
 
                 // Reset Button
@@ -865,7 +1021,7 @@ fun MainScreen(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("🔄 Real Location")
+                    Text("🔄 Real", fontSize = 12.sp)
                 }
 
                 // Settings
