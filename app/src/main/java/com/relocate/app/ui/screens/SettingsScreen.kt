@@ -33,6 +33,9 @@ import com.relocate.app.spoofing.SpoofService
 import com.relocate.app.ui.components.OsmMapView
 import com.relocate.app.ui.components.SearchBar
 import com.relocate.app.ui.theme.*
+import com.relocate.app.updater.UpdateService
+import com.relocate.app.updater.UpdateInfo
+import com.relocate.app.updater.UpdateService.DownloadStatus
 import kotlinx.coroutines.*
 import java.util.Locale
 import kotlin.math.*
@@ -554,9 +557,9 @@ fun SettingsScreen(
             // ════════════════════════════════════════
             SectionHeader(text = "📦  App Update")
 
-            var updateInfo by remember { mutableStateOf<com.relocate.app.updater.UpdateService.UpdateInfo?>(null) }
+            var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
             var isCheckingUpdate by remember { mutableStateOf(false) }
-            var downloadStatus by remember { mutableStateOf<com.relocate.app.updater.UpdateService.DownloadStatus?>(null) }
+            var downloadStatus by remember { mutableStateOf<DownloadStatus?>(null) }
             var isDownloading by remember { mutableStateOf(false) }
 
             // Current version display
@@ -600,8 +603,8 @@ fun SettingsScreen(
                             updateInfo = null
                             downloadStatus = null
                             scope.launch {
-                                val info = com.relocate.app.updater.UpdateService.checkForUpdate(context)
-                                updateInfo = info
+                                val result = UpdateService.checkForUpdate(context)
+                                updateInfo = result
                                 isCheckingUpdate = false
                             }
                         },
@@ -675,20 +678,20 @@ fun SettingsScreen(
                                     // Download status
                                     val status = downloadStatus
                                     when {
-                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Downloading -> {
+                                        status is DownloadStatus.Downloading -> {
                                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                                             Spacer(Modifier.height(4.dp))
                                             Text("Downloading...", style = MaterialTheme.typography.labelSmall)
                                         }
-                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Installing -> {
+                                        status is DownloadStatus.Installing -> {
                                             Text("📲 Opening installer...", fontWeight = FontWeight.Bold,
                                                 color = Color(0xFF2196F3))
                                         }
-                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Done -> {
+                                        status is DownloadStatus.Done -> {
                                             Text("✅ Install started!", fontWeight = FontWeight.Bold,
                                                 color = Color(0xFF4CAF50))
                                         }
-                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Failed -> {
+                                        status is DownloadStatus.Failed -> {
                                             Text("❌ ${status.error}", color = Color(0xFFF44336),
                                                 style = MaterialTheme.typography.bodySmall)
                                         }
@@ -699,14 +702,14 @@ fun SettingsScreen(
                                                     onClick = {
                                                         isDownloading = true
                                                         scope.launch {
-                                                            com.relocate.app.updater.UpdateService.downloadAndInstall(
+                                                            UpdateService.downloadAndInstall(
                                                                 context = context,
                                                                 apkUrl = info.apkUrl,
                                                                 version = info.latestVersion,
                                                                 onProgress = { s ->
                                                                     downloadStatus = s
-                                                                    if (s is com.relocate.app.updater.UpdateService.DownloadStatus.Done ||
-                                                                        s is com.relocate.app.updater.UpdateService.DownloadStatus.Failed) {
+                                                                    if (s is DownloadStatus.Done ||
+                                                                        s is DownloadStatus.Failed) {
                                                                         isDownloading = false
                                                                     }
                                                                 }
