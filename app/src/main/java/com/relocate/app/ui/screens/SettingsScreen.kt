@@ -18,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -543,6 +544,212 @@ fun SettingsScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = Red)
                 ) {
                     Text("⏹️ Stop")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ════════════════════════════════════════
+            // APP UPDATE SECTION
+            // ════════════════════════════════════════
+            SectionHeader(text = "📦  App Update")
+
+            var updateInfo by remember { mutableStateOf<com.relocate.app.updater.UpdateService.UpdateInfo?>(null) }
+            var isCheckingUpdate by remember { mutableStateOf(false) }
+            var downloadStatus by remember { mutableStateOf<com.relocate.app.updater.UpdateService.DownloadStatus?>(null) }
+            var isDownloading by remember { mutableStateOf(false) }
+
+            // Current version display
+            val currentVersion = remember {
+                try {
+                    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+                } catch (_: Exception) { "?" }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    // Version badge
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Current Version:", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                "v$currentVersion",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    // Check button
+                    Button(
+                        onClick = {
+                            isCheckingUpdate = true
+                            updateInfo = null
+                            downloadStatus = null
+                            scope.launch {
+                                val info = com.relocate.app.updater.UpdateService.checkForUpdate(context)
+                                updateInfo = info
+                                isCheckingUpdate = false
+                            }
+                        },
+                        enabled = !isCheckingUpdate && !isDownloading,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        if (isCheckingUpdate) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Checking...")
+                        } else {
+                            Text("🔄 Check for Updates")
+                        }
+                    }
+
+                    // Update result
+                    updateInfo?.let { info ->
+                        Spacer(Modifier.height(12.dp))
+
+                        if (info.isUpdateAvailable) {
+                            // New version available
+                            Card(
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFF4CAF50).copy(alpha = 0.1f)
+                                )
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        "🎉 New version available!",
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF4CAF50)
+                                    )
+                                    Text(
+                                        "v${info.latestVersion}",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                    if (!info.releaseName.isNullOrBlank()) {
+                                        Text(
+                                            info.releaseName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (!info.releaseNotes.isNullOrBlank()) {
+                                        Spacer(Modifier.height(6.dp))
+                                        Text(
+                                            info.releaseNotes.take(300),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 6
+                                        )
+                                    }
+                                    if (info.apkSize > 0) {
+                                        Text(
+                                            "Size: ${"%.1f".format(info.apkSize / 1_048_576f)} MB",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    Spacer(Modifier.height(8.dp))
+
+                                    // Download status
+                                    when (val status = downloadStatus) {
+                                        is com.relocate.app.updater.UpdateService.DownloadStatus.Downloading -> {
+                                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                            Spacer(Modifier.height(4.dp))
+                                            Text("Downloading...", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        is com.relocate.app.updater.UpdateService.DownloadStatus.Installing -> {
+                                            Text("📲 Opening installer...", fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF2196F3))
+                                        }
+                                        is com.relocate.app.updater.UpdateService.DownloadStatus.Done -> {
+                                            Text("✅ Install started!", fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF4CAF50))
+                                        }
+                                        is com.relocate.app.updater.UpdateService.DownloadStatus.Failed -> {
+                                            Text("❌ ${status.error}", color = Color(0xFFF44336),
+                                                style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        null -> {
+                                            // Download button
+                                            if (info.apkUrl != null) {
+                                                Button(
+                                                    onClick = {
+                                                        isDownloading = true
+                                                        scope.launch {
+                                                            com.relocate.app.updater.UpdateService.downloadAndInstall(
+                                                                context = context,
+                                                                apkUrl = info.apkUrl,
+                                                                version = info.latestVersion,
+                                                                onProgress = { status ->
+                                                                    downloadStatus = status
+                                                                    if (status is com.relocate.app.updater.UpdateService.DownloadStatus.Done ||
+                                                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Failed) {
+                                                                        isDownloading = false
+                                                                    }
+                                                                }
+                                                            )
+                                                        }
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = Color(0xFF4CAF50)
+                                                    )
+                                                ) {
+                                                    Text("⬇️ Download & Install v${info.latestVersion}")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Already up to date
+                            Card(
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("✅", fontSize = 20.sp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Column {
+                                        Text("You're up to date!", fontWeight = FontWeight.Bold)
+                                        Text(
+                                            "v$currentVersion is the latest version",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
