@@ -1,5 +1,5 @@
 /**
- * [Relocate] EagleHook.kt  —  v1.5.0
+ * [Relocate] UberLocationHook.kt  —  v1.8.0
  * Author: AntiGravity AI — LSPosed Module Hook
  * Purpose: Hooks inside the target navigation app process via LSPosed/XPosed
  *          to intercept ALL mock location AND root/device-state detection.
@@ -13,7 +13,7 @@
  *  4. isMocked / isMock          — Location internal fields (Android 12+)
  *  5. Coordinates injected       — Location.getLatitude/getLongitude
  *
- * ROOT / DEVICE STATE CHECKS (v1.3.0 — NEW):
+ * ROOT / DEVICE STATE CHECKS (v1.3.0):
  *  6. Build.TAGS "test-keys"     — classes9/11/22: build tag check
  *  7. Developer Options enabled  — classes9: Settings.Global.development_settings_enabled
  *  8. USB Debugging enabled       — Settings.Global.adb_enabled
@@ -22,16 +22,23 @@
  * 10. su / busybox binaries      — classes22/9: File.exists() on su paths
  * 11. ExtraDeviceInfo.isRooted   — classes6: Uber's own data class field
  *
- * DEVICE IDENTITY SPOOFING (v1.5.0 — NEW):
+ * DEVICE IDENTITY SPOOFING (v1.5.0):
  * 12. MediaDrm.getPropertyByteArray("deviceUniqueId") → spoofed Widevine DRM ID
- *     Targets: x-uber-drm-id header in go-online request (ATTESTATION block fix)
  * 13. Settings.Secure.getString("android_id") → spoofed Android ID
- *     Targets: androidId field in Uber deviceIds (device fingerprint reset)
+ *
+ * NEW IN v1.8.0:
+ * 14. Google Advertising ID (GAID) → AdvertisingIdClient.Info.getId() spoofed
+ * 15. Build.FINGERPRINT + Build.DISPLAY + Build.HOST → spoofed to stock values
+ * 16. WebView/Custom Tab CookieManager → strips Uber tracking cookies
+ *
+ * CROSS-PROCESS HOOK LOGGING:
+ *  All hooks write to a shared file so Relocate's Live Console can display activity.
  */
 package com.relocate.app.xposed
 
 import android.content.ContentResolver
 import android.content.pm.PackageManager
+import android.os.Environment
 import android.util.Log
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
@@ -39,13 +46,15 @@ import de.robv.android.xposed.XC_MethodReplacement
 import de.robv.android.xposed.XSharedPreferences
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
+import java.io.File
 import java.security.SecureRandom
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 class UberLocationHook : IXposedHookLoadPackage {
 
     companion object {
         private const val TAG = "[EagleHook]"
-        // v1.5.0: No longer limited to one app — hooks ALL apps
         private const val RELOCATE_PKG = "com.relocate.app"
         // Delegate to SpoofConstants — single source of truth for keys
         const val PREFS_NAME = com.relocate.app.SpoofConstants.PREFS_NAME
@@ -54,6 +63,8 @@ class UberLocationHook : IXposedHookLoadPackage {
         const val KEY_LNG = com.relocate.app.SpoofConstants.KEY_LNG
         const val KEY_FAKE_DRM_ID = com.relocate.app.SpoofConstants.KEY_FAKE_DRM_ID
         const val KEY_FAKE_ANDROID_ID = com.relocate.app.SpoofConstants.KEY_FAKE_ANDROID_ID
+        const val KEY_FAKE_GAID = com.relocate.app.SpoofConstants.KEY_FAKE_GAID
+        const val KEY_FAKE_FINGERPRINT = com.relocate.app.SpoofConstants.KEY_FAKE_FINGERPRINT
 
         // Root app package names found in Eagle's DEX (classes22.dex, classes9.dex)
         private val ROOT_PACKAGES = setOf(
@@ -89,16 +100,24 @@ class UberLocationHook : IXposedHookLoadPackage {
             "development_settings_enabled",
             "adb_enabled"
         )
+
+        // Uber-related cookie domains for Hook 16
+        private val UBER_COOKIE_DOMAINS = listOf(
+            "uber.com", "auth.uber.com", "partners.uber.com",
+            "login.uber.com", "m.uber.com", "driver.uber.com"
+        )
     }
 
     private var prefs: XSharedPreferences? = null
+    private var currentProcessName: String = "unknown"
+    private val hookLogDateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
-        // v1.4.0: Hook into ALL app processes (not just Uber)
         // Skip our own to avoid recursion
         if (lpparam.packageName == RELOCATE_PKG) return
 
-        Log.i(TAG, "[Init] Hooking process: ${lpparam.packageName} — installing 13 hooks (v1.5.0)")
+        currentProcessName = lpparam.packageName
+        Log.i(TAG, "[Init] Hooking process: ${lpparam.packageName} — installing 16 hooks (v1.8.0)")
 
         // Load shared preferences written by Relocate's SpoofService
         prefs = XSharedPreferences(RELOCATE_PKG, PREFS_NAME)
@@ -117,24 +136,61 @@ class UberLocationHook : IXposedHookLoadPackage {
         installHookPackageManager(lpparam.classLoader)
         installHookFileExists(lpparam.classLoader)
 
-        // ── v1.5.0 hooks: Device identity spoofing (x-uber-drm-id + android_id) ──
+        // ── v1.5.0 hooks: Device identity spoofing ──
         installHookDrmId(lpparam.classLoader)
         installHookAndroidId(lpparam.classLoader)
 
-        Log.i(TAG, "[Init] [DONE] All 13 hooks active in ${lpparam.packageName}")
+        // ── v1.8.0 hooks: Extended identity + cookie isolation ──
+        installHookGaid(lpparam.classLoader)
+        installHookBuildFingerprint(lpparam.classLoader)
+        installHookCookieManager(lpparam.classLoader)
+
+        Log.i(TAG, "[Init] [DONE] All 16 hooks active in ${lpparam.packageName}")
+        writeHookLog("INIT", "All 16 hooks installed")
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+    // CROSS-PROCESS HOOK LOGGING
+    // Writes to a shared file that Relocate's Live Console reads.
+    // ═════════════════════════════════════════════════════════════════════════
+
+    private fun writeHookLog(hookId: String, details: String) {
+        try {
+            val logDir = File(Environment.getExternalStorageDirectory(), "Relocate")
+            if (!logDir.exists()) logDir.mkdirs()
+            val logFile = File(logDir, com.relocate.app.SpoofConstants.HOOK_LOG_FILENAME)
+
+            val timestamp = hookLogDateFormat.format(System.currentTimeMillis())
+            val line = "$timestamp|$currentProcessName|$hookId|$details\n"
+
+            // Append to log file (thread-safe enough for our use case)
+            logFile.appendText(line)
+
+            // Trim if too large (keep last N lines)
+            if (logFile.length() > 500_000) { // ~500KB
+                val lines = logFile.readLines()
+                val trimmed = lines.takeLast(com.relocate.app.SpoofConstants.HOOK_LOG_MAX_LINES)
+                logFile.writeText(trimmed.joinToString("\n") + "\n")
+            }
+        } catch (e: Exception) {
+            // Silently fail — logging should never crash the host app
+            Log.w(TAG, "[HookLog] Write failed: ${e.message}")
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
     // HOOK 1: Location.isFromMockProvider() → always false
-    // Primary check Uber reads on every location update.
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookIsFromMockProvider(classLoader: ClassLoader) {
         try {
             XposedHelpers.findAndHookMethod(
                 "android.location.Location", classLoader,
                 "isFromMockProvider",
                 object : XC_MethodReplacement() {
-                    override fun replaceHookedMethod(param: MethodHookParam): Any = false
+                    override fun replaceHookedMethod(param: MethodHookParam): Any {
+                        writeHookLog("Hook01", "isFromMockProvider → false")
+                        return false
+                    }
                 }
             )
             Log.i(TAG, "[Hook1] [SUCCESS] isFromMockProvider → false")
@@ -143,16 +199,19 @@ class UberLocationHook : IXposedHookLoadPackage {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     // HOOK 2: Location.isMock() → always false  (Android 12+ API 31)
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookMockProviderField(classLoader: ClassLoader) {
         try {
             XposedHelpers.findAndHookMethod(
                 "android.location.Location", classLoader,
                 "isMock",
                 object : XC_MethodReplacement() {
-                    override fun replaceHookedMethod(param: MethodHookParam): Any = false
+                    override fun replaceHookedMethod(param: MethodHookParam): Any {
+                        writeHookLog("Hook02", "isMock → false")
+                        return false
+                    }
                 }
             )
             Log.i(TAG, "[Hook2] [SUCCESS] Location.isMock() → false")
@@ -161,10 +220,9 @@ class UberLocationHook : IXposedHookLoadPackage {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     // HOOK 3: LocationManager.getProviders() → strip test providers
-    // Uber scans this list for our addTestProvider() registration.
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookLocationProviders(classLoader: ClassLoader) {
         val cleanProviders = setOf("gps", "network", "passive", "fused")
 
@@ -178,7 +236,8 @@ class UberLocationHook : IXposedHookLoadPackage {
                         val providers = (param.result as? List<*>)?.filterIsInstance<String>() ?: return
                         val filtered = providers.filter { it in cleanProviders }
                         if (filtered.size != providers.size) {
-                            Log.d(TAG, "[Hook3] Stripped test providers: ${providers - filtered.toSet()}")
+                            val stripped = providers - filtered.toSet()
+                            writeHookLog("Hook03", "Stripped test providers: $stripped")
                             param.result = filtered
                         }
                     }
@@ -203,10 +262,9 @@ class UberLocationHook : IXposedHookLoadPackage {
         } catch (_: Exception) {}
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     // HOOK 4: Settings.Secure.getInt("mock_location") → 0
-    // Hooks the MOCK_GPS_SETTING_TURNED_ON detection vector.
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookMockLocationSetting(classLoader: ClassLoader) {
         val mockKeys = setOf("mock_location", "allow_mock_location")
 
@@ -217,7 +275,10 @@ class UberLocationHook : IXposedHookLoadPackage {
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         val key = param.args[1] as? String ?: return
-                        if (key in mockKeys) { param.result = 0 }
+                        if (key in mockKeys) {
+                            writeHookLog("Hook04", "mock_location → 0")
+                            param.result = 0
+                        }
                     }
                 }
             )
@@ -240,17 +301,18 @@ class UberLocationHook : IXposedHookLoadPackage {
         } catch (_: Exception) {}
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     // HOOK 5: Location.getLatitude/getLongitude → inject our coords
-    // Reads from Relocate's SharedPreferences via XSharedPreferences.
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookCoordinates(classLoader: ClassLoader) {
         try {
             XposedHelpers.findAndHookMethod(
                 "android.location.Location", classLoader, "getLatitude",
                 object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
-                        getFakeLatitude()?.let { param.result = it }
+                        getFakeLatitude()?.let {
+                            param.result = it
+                        }
                     }
                 }
             )
@@ -264,7 +326,9 @@ class UberLocationHook : IXposedHookLoadPackage {
                 "android.location.Location", classLoader, "getLongitude",
                 object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
-                        getFakeLongitude()?.let { param.result = it }
+                        getFakeLongitude()?.let {
+                            param.result = it
+                        }
                     }
                 }
             )
@@ -287,27 +351,19 @@ class UberLocationHook : IXposedHookLoadPackage {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // v1.3.0 NEW HOOKS — Root / Device State Detection Bypass
+    // HOOK 6: Build.TAGS → return "release-keys"
     // ═════════════════════════════════════════════════════════════════════════
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // HOOK 6: Build.TAGS → return "release-keys" instead of "test-keys"
-    // Found in classes9/11/22: Eagle reads Build.TAGS to detect custom ROMs.
-    // "test-keys" means an unofficial build — root indicator.
-    // ─────────────────────────────────────────────────────────────────────────
     private fun installHookBuildTags(classLoader: ClassLoader) {
         try {
-            // Build.TAGS is a static final field — we set it via reflection
             val buildClass = XposedHelpers.findClass("android.os.Build", classLoader)
             val tagsField = buildClass.getField("TAGS")
             tagsField.isAccessible = true
 
             val current = tagsField.get(null) as? String ?: ""
             if (current.contains("test-keys")) {
-                // Replace the field value to "release-keys"
-                // XposedHelpers.setStaticObjectField handles final fields
                 XposedHelpers.setStaticObjectField(buildClass, "TAGS", "release-keys")
                 Log.i(TAG, "[Hook6] [SUCCESS] Build.TAGS: \"$current\" → \"release-keys\"")
+                writeHookLog("Hook06", "Build.TAGS: $current → release-keys")
             } else {
                 Log.i(TAG, "[Hook6] [OK] Build.TAGS already \"$current\" — no change needed")
             }
@@ -315,7 +371,7 @@ class UberLocationHook : IXposedHookLoadPackage {
             Log.e(TAG, "[Hook6] [ERROR] Build.TAGS hook failed: ${e.message}")
         }
 
-        // Also spoof Build.TYPE — "userdebug" → "user" (release build type)
+        // Also spoof Build.TYPE — "userdebug" → "user"
         try {
             val buildClass = XposedHelpers.findClass("android.os.Build", classLoader)
             val typeField = buildClass.getField("TYPE")
@@ -328,23 +384,20 @@ class UberLocationHook : IXposedHookLoadPackage {
         } catch (_: Exception) {}
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // HOOK 7: Settings.Global.getInt("development_settings_enabled") → 0
-    //          Settings.Global.getInt("adb_enabled") → 0
-    // Found in classes9.dex: Eagle reads dev mode and ADB settings.
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+    // HOOK 7: Settings.Global dev/adb → 0
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookDeveloperSettings(classLoader: ClassLoader) {
         val hookBody = object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val key = param.args[1] as? String ?: return
                 if (key in GLOBAL_KEYS_TO_ZERO) {
-                    Log.d(TAG, "[Hook7] Intercepted Settings.Global.$key → 0")
+                    writeHookLog("Hook07", "Settings.Global.$key → 0")
                     param.result = 0
                 }
             }
         }
 
-        // Hook 3-arg version: getInt(ContentResolver, String, int)
         try {
             XposedHelpers.findAndHookMethod(
                 "android.provider.Settings\$Global", classLoader,
@@ -356,7 +409,6 @@ class UberLocationHook : IXposedHookLoadPackage {
             Log.e(TAG, "[Hook7] [ERROR] ${e.message}")
         }
 
-        // Hook 2-arg version: getInt(ContentResolver, String)
         try {
             XposedHelpers.findAndHookMethod(
                 "android.provider.Settings\$Global", classLoader,
@@ -368,18 +420,13 @@ class UberLocationHook : IXposedHookLoadPackage {
                     }
                 }
             )
-            Log.i(TAG, "[Hook7] [SUCCESS] Settings.Global dev/adb → 0 (2-arg)")
         } catch (_: Exception) {}
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // HOOK 8: PackageManager.getPackageInfo(rootPkg) → throw NameNotFoundException
-    //          PackageManager.getApplicationInfo(rootPkg) → throw NameNotFoundException
-    // Found in classes22/9: Eagle enumerates known root manager packages.
-    // We make them all invisible by throwing the "not installed" exception.
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+    // HOOK 8: PackageManager hides root apps
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookPackageManager(classLoader: ClassLoader) {
-        // Hook: getPackageInfo(String, int)
         try {
             XposedHelpers.findAndHookMethod(
                 "android.app.ApplicationPackageManager", classLoader,
@@ -388,7 +435,7 @@ class UberLocationHook : IXposedHookLoadPackage {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         val pkg = param.args[0] as? String ?: return
                         if (pkg in ROOT_PACKAGES) {
-                            Log.d(TAG, "[Hook8] Hiding root pkg: $pkg")
+                            writeHookLog("Hook08", "Hiding root pkg: $pkg")
                             param.throwable = PackageManager.NameNotFoundException("$pkg not found")
                         }
                     }
@@ -399,7 +446,6 @@ class UberLocationHook : IXposedHookLoadPackage {
             Log.e(TAG, "[Hook8] [ERROR] getPackageInfo hook: ${e.message}")
         }
 
-        // Hook: getApplicationInfo(String, int)
         try {
             XposedHelpers.findAndHookMethod(
                 "android.app.ApplicationPackageManager", classLoader,
@@ -408,18 +454,16 @@ class UberLocationHook : IXposedHookLoadPackage {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         val pkg = param.args[0] as? String ?: return
                         if (pkg in ROOT_PACKAGES) {
-                            Log.d(TAG, "[Hook8b] Hiding root app info: $pkg")
+                            writeHookLog("Hook08", "Hiding root app info: $pkg")
                             param.throwable = PackageManager.NameNotFoundException("$pkg not found")
                         }
                     }
                 }
             )
-            Log.i(TAG, "[Hook8b] [SUCCESS] PackageManager.getApplicationInfo() hides root apps")
         } catch (e: Exception) {
             Log.e(TAG, "[Hook8b] [ERROR] getApplicationInfo hook: ${e.message}")
         }
 
-        // Hook: getInstalledPackages(int) — filter list results
         try {
             XposedHelpers.findAndHookMethod(
                 "android.app.ApplicationPackageManager", classLoader,
@@ -431,22 +475,19 @@ class UberLocationHook : IXposedHookLoadPackage {
                         val before = list.size
                         list.removeIf { it.packageName in ROOT_PACKAGES }
                         if (list.size != before) {
-                            Log.d(TAG, "[Hook8c] Removed ${before - list.size} root packages from list")
+                            writeHookLog("Hook08", "Removed ${before - list.size} root pkgs from list")
                         }
                     }
                 }
             )
-            Log.i(TAG, "[Hook8c] [SUCCESS] getInstalledPackages() filters root apps")
         } catch (e: Exception) {
             Log.e(TAG, "[Hook8c] [ERROR] getInstalledPackages hook: ${e.message}")
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // HOOK 9: File.exists() → false for su/busybox binary paths
-    // Found in classes22/9: Eagle checks for su binary existence on filesystem.
-    // We intercept File.exists() and return false for all root-related paths.
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+    // HOOK 9: File.exists() hides su/busybox binaries
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookFileExists(classLoader: ClassLoader) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -456,9 +497,8 @@ class UberLocationHook : IXposedHookLoadPackage {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         val file = param.thisObject as? java.io.File ?: return
                         val path = file.absolutePath
-                        // Check if any root path is a substring of this file's path
                         if (ROOT_PATHS.any { rootPath -> path.contains(rootPath, ignoreCase = true) }) {
-                            Log.d(TAG, "[Hook9] Hiding file: $path → false")
+                            writeHookLog("Hook09", "Hiding file: $path → false")
                             param.result = false
                         }
                     }
@@ -471,16 +511,8 @@ class UberLocationHook : IXposedHookLoadPackage {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // v1.5.0 NEW HOOKS — Device Identity Spoofing (DRM ID + Android ID)
-    // Targets: x-uber-drm-id header and androidId body field in go-online request
-    // ═════════════════════════════════════════════════════════════════════════
-
-    // ─────────────────────────────────────────────────────────────────────────
     // HOOK 12: MediaDrm.getPropertyByteArray("deviceUniqueId") → spoofed DRM ID
-    // This is the source of x-uber-drm-id header Uber uses for ATTESTATION.
-    // We intercept the Widevine device unique ID and return a consistent spoofed value
-    // stored in Relocate's SharedPreferences (so it stays stable across calls).
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookDrmId(classLoader: ClassLoader) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -491,7 +523,7 @@ class UberLocationHook : IXposedHookLoadPackage {
                         val property = param.args[0] as? String ?: return
                         if (property == "deviceUniqueId") {
                             val fakeDrmId = getSpoofedDrmId()
-                            Log.d(TAG, "[Hook12] MediaDrm.deviceUniqueId → spoofed DRM ID (${fakeDrmId.size} bytes)")
+                            writeHookLog("Hook12", "DRM deviceUniqueId → spoofed (${fakeDrmId.size} bytes)")
                             param.result = fakeDrmId
                         }
                     }
@@ -503,12 +535,9 @@ class UberLocationHook : IXposedHookLoadPackage {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     // HOOK 13: Settings.Secure.getString("android_id") → spoofed Android ID
-    // Uber sends androidId in x-uber-device-ids header and request body.
-    // This must match what was registered with Uber's backend — so we return
-    // a consistent spoofed value stored in Relocate's SharedPreferences.
-    // ─────────────────────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
     private fun installHookAndroidId(classLoader: ClassLoader) {
         try {
             XposedHelpers.findAndHookMethod(
@@ -521,7 +550,7 @@ class UberLocationHook : IXposedHookLoadPackage {
                             prefs?.reload()
                             val fakeId = prefs?.getString(KEY_FAKE_ANDROID_ID, null)
                             if (!fakeId.isNullOrBlank()) {
-                                Log.d(TAG, "[Hook13] Settings.Secure.android_id → $fakeId")
+                                writeHookLog("Hook13", "android_id → $fakeId")
                                 param.result = fakeId
                             }
                         }
@@ -534,27 +563,218 @@ class UberLocationHook : IXposedHookLoadPackage {
         }
     }
 
-    /**
-     * Returns a consistent spoofed DRM ID (32 bytes).
-     * Stored as hex in Relocate's SharedPreferences (KEY_FAKE_DRM_ID).
-     * If not set yet, generates a random one — Relocate's App Fixer writes this.
-     */
+    // ═════════════════════════════════════════════════════════════════════════
+    // v1.8.0 NEW HOOKS
+    // ═════════════════════════════════════════════════════════════════════════
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HOOK 14: Google Advertising ID (GAID)
+    // Intercepts AdvertisingIdClient$Info.getId() → returns spoofed GAID
+    // Uber uses this for device fingerprinting and cross-app tracking.
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun installHookGaid(classLoader: ClassLoader) {
+        // Hook the Info.getId() method
+        try {
+            val infoClass = XposedHelpers.findClass(
+                "com.google.android.gms.ads.identifier.AdvertisingIdClient\$Info",
+                classLoader
+            )
+            XposedHelpers.findAndHookMethod(
+                infoClass, "getId",
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        prefs?.reload()
+                        val fakeGaid = prefs?.getString(KEY_FAKE_GAID, null)
+                        if (!fakeGaid.isNullOrBlank()) {
+                            writeHookLog("Hook14", "GAID → ${fakeGaid.take(8)}...")
+                            param.result = fakeGaid
+                        }
+                    }
+                }
+            )
+            Log.i(TAG, "[Hook14] [SUCCESS] AdvertisingIdClient.Info.getId() → spoofed GAID")
+        } catch (e: Exception) {
+            // Class might not be loaded in every app — that's fine
+            Log.d(TAG, "[Hook14] [SKIP] GAID class not found in this process: ${e.message}")
+        }
+
+        // Also hook the static getAdvertisingIdInfo() to intercept earlier
+        try {
+            val clientClass = XposedHelpers.findClass(
+                "com.google.android.gms.ads.identifier.AdvertisingIdClient",
+                classLoader
+            )
+            XposedHelpers.findAndHookMethod(
+                clientClass, "getAdvertisingIdInfo",
+                android.content.Context::class.java,
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val info = param.result ?: return
+                        prefs?.reload()
+                        val fakeGaid = prefs?.getString(KEY_FAKE_GAID, null)
+                        if (!fakeGaid.isNullOrBlank()) {
+                            // Set the internal id field via reflection
+                            try {
+                                val idField = info.javaClass.getDeclaredField("mId")
+                                idField.isAccessible = true
+                                idField.set(info, fakeGaid)
+                                writeHookLog("Hook14", "getAdvertisingIdInfo.mId → ${fakeGaid.take(8)}...")
+                            } catch (_: Exception) {
+                                // Try alternate field name
+                                try {
+                                    val idField = info.javaClass.getDeclaredField("zzb")
+                                    idField.isAccessible = true
+                                    idField.set(info, fakeGaid)
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
+                }
+            )
+            Log.i(TAG, "[Hook14b] [SUCCESS] AdvertisingIdClient.getAdvertisingIdInfo() → intercepted")
+        } catch (e: Exception) {
+            Log.d(TAG, "[Hook14b] [SKIP] AdvertisingIdClient not found: ${e.message}")
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HOOK 15: Build.FINGERPRINT + Build.DISPLAY + Build.HOST
+    // Uber hashes the full device fingerprint for server-side verification.
+    // We spoof these to match a stock device identity.
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun installHookBuildFingerprint(classLoader: ClassLoader) {
+        try {
+            prefs?.reload()
+            val fakeFingerprint = prefs?.getString(KEY_FAKE_FINGERPRINT, null)
+            if (!fakeFingerprint.isNullOrBlank()) {
+                val buildClass = XposedHelpers.findClass("android.os.Build", classLoader)
+
+                // Spoof Build.FINGERPRINT
+                try {
+                    XposedHelpers.setStaticObjectField(buildClass, "FINGERPRINT", fakeFingerprint)
+                    writeHookLog("Hook15", "Build.FINGERPRINT → ${fakeFingerprint.take(30)}...")
+                    Log.i(TAG, "[Hook15] [SUCCESS] Build.FINGERPRINT → ${fakeFingerprint.take(30)}...")
+                } catch (e: Exception) {
+                    Log.e(TAG, "[Hook15] [ERROR] FINGERPRINT: ${e.message}")
+                }
+
+                // Spoof Build.DISPLAY — often contains build number
+                try {
+                    val displayStr = fakeFingerprint.substringAfterLast("/", "UP1A.231005.007")
+                        .substringBefore(":")
+                    XposedHelpers.setStaticObjectField(buildClass, "DISPLAY", displayStr)
+                    Log.i(TAG, "[Hook15b] [SUCCESS] Build.DISPLAY → $displayStr")
+                } catch (_: Exception) {}
+
+                // Spoof Build.HOST — build server name
+                try {
+                    XposedHelpers.setStaticObjectField(buildClass, "HOST", "abfarm-release")
+                    Log.i(TAG, "[Hook15c] [SUCCESS] Build.HOST → abfarm-release")
+                } catch (_: Exception) {}
+            } else {
+                Log.i(TAG, "[Hook15] [SKIP] No fake fingerprint set — using real")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "[Hook15] [ERROR] Build fingerprint hook failed: ${e.message}")
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HOOK 16: WebView/Custom Tab CookieManager
+    // When Uber opens a Chrome Custom Tab for login, it shares Chrome's cookies.
+    // We intercept getCookie() to strip Uber-tracking cookies that could
+    // link back to the old (blocked) device identity.
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun installHookCookieManager(classLoader: ClassLoader) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                "android.webkit.CookieManager", classLoader,
+                "getCookie", String::class.java,
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val url = param.args[0] as? String ?: return
+                        // Check if this URL is an Uber domain
+                        val isUberUrl = UBER_COOKIE_DOMAINS.any { domain ->
+                            url.contains(domain, ignoreCase = true)
+                        }
+                        if (isUberUrl) {
+                            val cookies = param.result as? String
+                            if (!cookies.isNullOrBlank()) {
+                                // Strip tracking cookies — keep only session-essential ones
+                                val cleaned = cookies.split(";")
+                                    .map { it.trim() }
+                                    .filter { cookie ->
+                                        val name = cookie.substringBefore("=").trim().lowercase()
+                                        // Block device fingerprint / tracking cookies
+                                        !name.contains("did") &&
+                                        !name.contains("device") &&
+                                        !name.contains("fingerprint") &&
+                                        !name.contains("udi") &&
+                                        !name.contains("drm") &&
+                                        !name.contains("_ga") &&
+                                        !name.contains("utag")
+                                    }
+                                    .joinToString("; ")
+
+                                if (cleaned != cookies) {
+                                    writeHookLog("Hook16", "Stripped tracking cookies from $url")
+                                    param.result = cleaned
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+            Log.i(TAG, "[Hook16] [SUCCESS] CookieManager.getCookie() strips Uber tracking cookies")
+        } catch (e: Exception) {
+            Log.e(TAG, "[Hook16] [ERROR] CookieManager hook failed: ${e.message}")
+        }
+
+        // Also hook setCookie to block Uber from writing new tracking cookies
+        try {
+            XposedHelpers.findAndHookMethod(
+                "android.webkit.CookieManager", classLoader,
+                "setCookie", String::class.java, String::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val url = param.args[0] as? String ?: return
+                        val cookie = param.args[1] as? String ?: return
+                        val isUberUrl = UBER_COOKIE_DOMAINS.any { domain ->
+                            url.contains(domain, ignoreCase = true)
+                        }
+                        if (isUberUrl) {
+                            val name = cookie.substringBefore("=").trim().lowercase()
+                            if (name.contains("did") || name.contains("device") ||
+                                name.contains("fingerprint") || name.contains("udi") ||
+                                name.contains("drm")) {
+                                writeHookLog("Hook16", "Blocked tracking cookie: $name for $url")
+                                param.result = null // Block the cookie write
+                            }
+                        }
+                    }
+                }
+            )
+            Log.i(TAG, "[Hook16b] [SUCCESS] CookieManager.setCookie() blocks Uber tracking cookies")
+        } catch (e: Exception) {
+            Log.e(TAG, "[Hook16b] [ERROR] setCookie hook failed: ${e.message}")
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // SharedPreferences helpers — read cross-process from Relocate's SpoofService
+    // ═════════════════════════════════════════════════════════════════════════
+
     private fun getSpoofedDrmId(): ByteArray {
         prefs?.reload()
         val hexStr = prefs?.getString(KEY_FAKE_DRM_ID, null)
         if (!hexStr.isNullOrBlank() && hexStr.length == 64) {
             return hexStr.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
         }
-        // Fallback: generate random 32 bytes (stable per-process, not ideal)
         val random = ByteArray(32)
         SecureRandom().nextBytes(random)
-        Log.w(TAG, "[Hook12] No fake_drm_id in prefs — using random. Run App Fixer to set a stable ID.")
+        Log.w(TAG, "[Hook12] No fake_drm_id in prefs — using random. Run App Fixer to set stable ID.")
         return random
     }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // SharedPreferences helpers — read cross-process from Relocate's SpoofService
-    // ═════════════════════════════════════════════════════════════════════════
 
     private fun isSpoofActive(): Boolean {
         prefs?.reload()
