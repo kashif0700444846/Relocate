@@ -373,7 +373,7 @@ private fun FixPanel(
                 }
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             // Steps or pre-fix info
             if (progressSteps.isEmpty() && !isFixing) {
