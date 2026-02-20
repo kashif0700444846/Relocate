@@ -47,13 +47,13 @@ class UberLocationHook : IXposedHookLoadPackage {
         private const val TAG = "[EagleHook]"
         // v1.5.0: No longer limited to one app — hooks ALL apps
         private const val RELOCATE_PKG = "com.relocate.app"
-        // NOTE: NOT private — accessed by SpoofService cross-class
-        const val PREFS_NAME = "spoof_coords"
-        const val KEY_ACTIVE = "is_active"
-        const val KEY_LAT = "lat_bits"       // stored as Long (Double.toBits)
-        const val KEY_LNG = "lng_bits"       // stored as Long (Double.toBits)
-        const val KEY_FAKE_DRM_ID = "fake_drm_id"   // hex string of spoofed Widevine DRM ID
-        const val KEY_FAKE_ANDROID_ID = "fake_android_id" // spoofed android_id
+        // Delegate to SpoofConstants — single source of truth for keys
+        const val PREFS_NAME = com.relocate.app.SpoofConstants.PREFS_NAME
+        const val KEY_ACTIVE = com.relocate.app.SpoofConstants.KEY_ACTIVE
+        const val KEY_LAT = com.relocate.app.SpoofConstants.KEY_LAT
+        const val KEY_LNG = com.relocate.app.SpoofConstants.KEY_LNG
+        const val KEY_FAKE_DRM_ID = com.relocate.app.SpoofConstants.KEY_FAKE_DRM_ID
+        const val KEY_FAKE_ANDROID_ID = com.relocate.app.SpoofConstants.KEY_FAKE_ANDROID_ID
 
         // Root app package names found in Eagle's DEX (classes22.dex, classes9.dex)
         private val ROOT_PACKAGES = setOf(

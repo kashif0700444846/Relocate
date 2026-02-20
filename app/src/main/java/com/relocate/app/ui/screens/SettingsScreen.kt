@@ -46,7 +46,8 @@ fun SettingsScreen(
     prefsManager: PreferencesManager,
     presetStore: PresetStore,
     recentStore: RecentStore,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToLogs: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -549,6 +550,31 @@ fun SettingsScreen(
                     Text("⏹️ Stop")
                 }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ════════════════════════════════════════
+            // LOGS SECTION
+            // ════════════════════════════════════════
+            SectionHeader(text = "📋  Logs")
+            Button(
+                onClick = onNavigateToLogs,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                )
+            ) {
+                Text("📋 View App Logs")
+            }
+            Text(
+                text = "View internal logs for debugging. Copy & share with developer.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
 

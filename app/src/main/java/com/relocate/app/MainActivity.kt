@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.relocate.app.ui.screens.LogScreen
 import com.relocate.app.data.PreferencesManager
 import com.relocate.app.data.PresetStore
 import com.relocate.app.data.RecentStore
@@ -67,12 +68,19 @@ class MainActivity : ComponentActivity() {
                                 prefsManager = prefsManager,
                                 presetStore = presetStore,
                                 recentStore = recentStore,
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack() },
+                                onNavigateToLogs = { navController.navigate("logs") }
                             )
                         }
 
                         composable("fixer") {
                             AppFixerScreen(
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable("logs") {
+                            LogScreen(
                                 onBack = { navController.popBackStack() }
                             )
                         }

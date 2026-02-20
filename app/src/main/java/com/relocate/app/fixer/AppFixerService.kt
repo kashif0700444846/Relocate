@@ -8,7 +8,7 @@ package com.relocate.app.fixer
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import com.relocate.app.xposed.UberLocationHook
+import com.relocate.app.SpoofConstants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.security.SecureRandom
@@ -79,7 +79,7 @@ object AppFixerService {
         val newAndroidId = generateAndroidId()
         step("Generate new Android ID → $newAndroidId") {
             writeSpoofPrefs(context) { prefs ->
-                prefs.putString(UberLocationHook.KEY_FAKE_ANDROID_ID, newAndroidId)
+                prefs.putString(SpoofConstants.KEY_FAKE_ANDROID_ID, newAndroidId)
             }
             // Also write to real system settings (root)
             execRoot("settings put secure android_id $newAndroidId")
@@ -89,7 +89,7 @@ object AppFixerService {
         val newDrmId = generateDrmIdHex()
         step("Spoof Widevine DRM ID (x-uber-drm-id)") {
             writeSpoofPrefs(context) { prefs ->
-                prefs.putString(UberLocationHook.KEY_FAKE_DRM_ID, newDrmId)
+                prefs.putString(SpoofConstants.KEY_FAKE_DRM_ID, newDrmId)
             }
         }
 
@@ -134,7 +134,7 @@ object AppFixerService {
      * Writes to the world-readable SharedPreferences file that XSharedPreferences reads.
      */
     private fun writeSpoofPrefs(context: Context, block: (SharedPreferences.Editor) -> Unit) {
-        val prefs = context.getSharedPreferences(UberLocationHook.PREFS_NAME, Context.MODE_WORLD_READABLE)
+        val prefs = context.getSharedPreferences(SpoofConstants.PREFS_NAME, Context.MODE_WORLD_READABLE)
         prefs.edit().apply {
             block(this)
             apply()

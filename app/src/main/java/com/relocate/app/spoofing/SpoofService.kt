@@ -19,7 +19,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import com.relocate.app.MainActivity
 import com.relocate.app.data.SpoofMode
-import com.relocate.app.xposed.UberLocationHook
+import com.relocate.app.SpoofConstants
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.*
 import java.util.Locale
@@ -260,10 +260,10 @@ class SpoofService : Service() {
     @Suppress("CommitPrefEdits")
     private fun writeSpoofCoords(lat: Double, lng: Double) {
         try {
-            getSharedPreferences(UberLocationHook.PREFS_NAME, MODE_PRIVATE).edit().apply {
-                putBoolean(UberLocationHook.KEY_ACTIVE, true)
-                putLong(UberLocationHook.KEY_LAT, lat.toBits())
-                putLong(UberLocationHook.KEY_LNG, lng.toBits())
+            getSharedPreferences(SpoofConstants.PREFS_NAME, MODE_PRIVATE).edit().apply {
+                putBoolean(SpoofConstants.KEY_ACTIVE, true)
+                putLong(SpoofConstants.KEY_LAT, lat.toBits())
+                putLong(SpoofConstants.KEY_LNG, lng.toBits())
                 apply()
             }
             Log.d(TAG, "[SpoofPrefs] [WRITE] lat=$lat lng=$lng written for XPosed hook")
@@ -278,10 +278,10 @@ class SpoofService : Service() {
     @Suppress("CommitPrefEdits")
     private fun clearSpoofCoords() {
         try {
-            getSharedPreferences(UberLocationHook.PREFS_NAME, MODE_PRIVATE).edit().apply {
-                putBoolean(UberLocationHook.KEY_ACTIVE, false)
-                remove(UberLocationHook.KEY_LAT)
-                remove(UberLocationHook.KEY_LNG)
+            getSharedPreferences(SpoofConstants.PREFS_NAME, MODE_PRIVATE).edit().apply {
+                putBoolean(SpoofConstants.KEY_ACTIVE, false)
+                remove(SpoofConstants.KEY_LAT)
+                remove(SpoofConstants.KEY_LNG)
                 apply()
             }
             Log.d(TAG, "[SpoofPrefs] [CLEAR] Spoof prefs cleared")
