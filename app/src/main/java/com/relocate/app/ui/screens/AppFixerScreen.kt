@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -309,7 +310,7 @@ private fun AppCard(
                         bmp
                     }
                     val imageBitmap = remember(bitmap) {
-                        androidx.compose.ui.graphics.asImageBitmap(bitmap)
+                        bitmap.asImageBitmap()
                     }
                     androidx.compose.foundation.Image(
                         bitmap = imageBitmap,
