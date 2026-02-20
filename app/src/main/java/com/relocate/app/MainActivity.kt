@@ -123,9 +123,21 @@ class MainActivity : ComponentActivity() {
                                 onNavigateToSettings = {
                                     navController.navigate("settings")
                                 },
+                                onNavigateToFeatures = {
+                                    navController.navigate("features")
+                                },
                                 onNavigateToFixer = {
                                     navController.navigate("fixer")
                                 }
+                            )
+                        }
+
+                        composable("features") {
+                            FeaturesScreen(
+                                onBack = { navController.popBackStack() },
+                                onNavigateToFixer = { navController.navigate("fixer") },
+                                onNavigateToLogs = { navController.navigate("logs") },
+                                onNavigateToSettings = { navController.navigate("settings") }
                             )
                         }
 
@@ -134,8 +146,7 @@ class MainActivity : ComponentActivity() {
                                 prefsManager = prefsManager,
                                 presetStore = presetStore,
                                 recentStore = recentStore,
-                                onBack = { navController.popBackStack() },
-                                onNavigateToLogs = { navController.navigate("logs") }
+                                onBack = { navController.popBackStack() }
                             )
                         }
 

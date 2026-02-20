@@ -57,7 +57,8 @@ fun MainScreen(
     presetStore: PresetStore,
     recentStore: RecentStore,
     onNavigateToSettings: () -> Unit,
-    onNavigateToFixer: () -> Unit = {}
+    onNavigateToFixer: () -> Unit = {},
+    onNavigateToFeatures: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1032,6 +1033,11 @@ fun MainScreen(
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("🔄 Real", fontSize = 12.sp)
+                }
+
+                // Features
+                IconButton(onClick = onNavigateToFeatures) {
+                    Icon(Icons.Default.Dashboard, contentDescription = "Features")
                 }
 
                 // Settings
