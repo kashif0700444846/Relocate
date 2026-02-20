@@ -1,21 +1,25 @@
 // [Relocate] [SearchBar.kt] - Address Search with Autocomplete
 // Uses Nominatim API for live address suggestions.
-// v1.3.1 fix: replaced LazyColumn with Column (LazyColumn inside verticalScroll crashes).
+// v1.4.0: Completely rewritten to eliminate all crash paths.
+// - No LazyColumn (crashes inside verticalScroll)
+// - No AnimatedVisibility (can cause measurement crash on rapid recomposition)
+// - No Divider/HorizontalDivider (version-dependent)
+// - Full try/catch around every coroutine and API call
 
 package com.relocate.app.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.relocate.app.network.NominatimApi
@@ -45,12 +49,23 @@ fun SearchBar(
                 searchJob?.cancel()
                 if (newQuery.length >= 2) {
                     searchJob = scope.launch {
-                        delay(350) // Debounce
-                        isSearching = true
-                        showDropdown = true  // Show loading spinner immediately
-                        results = NominatimApi.search(newQuery)
-                        showDropdown = results.isNotEmpty()
-                        isSearching = false
+                        try {
+                            delay(400) // Debounce
+                            isSearching = true
+                            val searchResults = try {
+                                NominatimApi.search(newQuery)
+                            } catch (e: Exception) {
+                                android.util.Log.e("SearchBar", "Search failed: ${e.message}")
+                                emptyList()
+                            }
+                            results = searchResults
+                            showDropdown = searchResults.isNotEmpty()
+                        } catch (e: Exception) {
+                            // Coroutine cancelled or other error — safe to ignore
+                            android.util.Log.w("SearchBar", "Search coroutine error: ${e.message}")
+                        } finally {
+                            isSearching = false
+                        }
                     }
                 } else {
                     showDropdown = false
@@ -59,7 +74,7 @@ fun SearchBar(
                 }
             },
             placeholder = {
-                Text("🔍 Search an address or city...", fontSize = 13.sp)
+                Text("Search address or city...", fontSize = 13.sp)
             },
             leadingIcon = {
                 Icon(Icons.Default.Search, contentDescription = "Search")
@@ -71,6 +86,14 @@ fun SearchBar(
                         strokeWidth = 2.dp,
                         color = MaterialTheme.colorScheme.primary
                     )
+                } else if (query.isNotEmpty()) {
+                    IconButton(onClick = {
+                        query = ""
+                        results = emptyList()
+                        showDropdown = false
+                    }) {
+                        Icon(Icons.Default.Clear, contentDescription = "Clear")
+                    }
                 }
             },
             singleLine = true,
@@ -82,10 +105,9 @@ fun SearchBar(
             )
         )
 
-        // Autocomplete dropdown
-        // FIX: Use Column (NOT LazyColumn) — LazyColumn inside verticalScroll crashes.
-        // The result set is always ≤ 6 items (Nominatim limit=6), so Column is fine.
-        AnimatedVisibility(visible = showDropdown && results.isNotEmpty()) {
+        // Autocomplete dropdown — plain Column, no LazyColumn, no AnimatedVisibility
+        if (showDropdown && results.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(4.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -94,58 +116,46 @@ fun SearchBar(
                 ),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
-                Column {
-                    results.forEachIndexed { index, result ->
-                        SearchResultItem(
-                            result = result,
-                            onClick = {
-                                query = result.name
-                                showDropdown = false
-                                results = emptyList()
-                                onLocationSelected(result)
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    results.forEach { result ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    query = result.name
+                                    showDropdown = false
+                                    results = emptyList()
+                                    onLocationSelected(result)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("📍", fontSize = 16.sp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = result.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                val subtitle = try {
+                                    result.fullName.split(", ").drop(2).take(2).joinToString(", ")
+                                } catch (e: Exception) { "" }
+                                if (subtitle.isNotBlank()) {
+                                    Text(
+                                        text = subtitle,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
-                        )
-                        // Divider between items (except after last)
-                        if (index < results.size - 1) {
-                            Divider(
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                                thickness = 0.5.dp
-                            )
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SearchResultItem(
-    result: SearchResult,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("📍", fontSize = 16.sp)
-        Spacer(modifier = Modifier.width(10.dp))
-        Column {
-            Text(
-                text = result.name,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            val subtitle = result.fullName.split(", ").drop(2).take(2).joinToString(", ")
-            if (subtitle.isNotBlank()) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }

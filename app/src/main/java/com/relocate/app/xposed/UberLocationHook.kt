@@ -1,5 +1,5 @@
 /**
- * [Relocate] EagleHook.kt  —  v1.3.0
+ * [Relocate] EagleHook.kt  —  v1.4.0
  * Author: AntiGravity AI — LSPosed Module Hook
  * Purpose: Hooks inside the target navigation app process via LSPosed/XPosed
  *          to intercept ALL mock location AND root/device-state detection.
@@ -38,7 +38,7 @@ class UberLocationHook : IXposedHookLoadPackage {
 
     companion object {
         private const val TAG = "[EagleHook]"
-        private const val TARGET_PKG = "com.ubercab.driver"
+        // v1.4.0: No longer limited to one app — hooks ALL apps
         private const val RELOCATE_PKG = "com.relocate.app"
         // NOTE: NOT private — accessed by SpoofService cross-class
         const val PREFS_NAME = "spoof_coords"
@@ -85,10 +85,11 @@ class UberLocationHook : IXposedHookLoadPackage {
     private var prefs: XSharedPreferences? = null
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
-        // ONLY activate inside the target app — never affect other processes
-        if (lpparam.packageName != TARGET_PKG) return
+        // v1.4.0: Hook into ALL app processes (not just Uber)
+        // Skip our own to avoid recursion
+        if (lpparam.packageName == RELOCATE_PKG) return
 
-        Log.i(TAG, "[Init] [SUCCESS] Eagle process detected — installing 11 hooks (v1.3.0)")
+        Log.i(TAG, "[Init] Hooking process: ${lpparam.packageName} — installing 11 hooks (v1.4.0)")
 
         // Load shared preferences written by Relocate's SpoofService
         prefs = XSharedPreferences(RELOCATE_PKG, PREFS_NAME)
@@ -107,7 +108,7 @@ class UberLocationHook : IXposedHookLoadPackage {
         installHookPackageManager(lpparam.classLoader)
         installHookFileExists(lpparam.classLoader)
 
-        Log.i(TAG, "[Init] [DONE] All 11 hooks active — Eagle sees a clean, unrooted device")
+        Log.i(TAG, "[Init] [DONE] All 11 hooks active in ${lpparam.packageName}")
     }
 
     // ─────────────────────────────────────────────────────────────────────────

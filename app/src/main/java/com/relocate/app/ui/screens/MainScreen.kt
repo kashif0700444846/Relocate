@@ -288,31 +288,64 @@ fun MainScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ── MAP ──
-            Card(
-                shape = RoundedCornerShape(14.dp),
+            // ── MAP WITH MY LOCATION BUTTON ──
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(220.dp)
             ) {
-                OsmMapView(
-                    modifier = Modifier.fillMaxSize(),
-                    latitude = latitude,
-                    longitude = longitude,
-                    onMapClick = { lat, lng ->
-                        latitude = lat
-                        longitude = lng
-                        selectedPresetIndex = null
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    OsmMapView(
+                        modifier = Modifier.fillMaxSize(),
+                        latitude = latitude,
+                        longitude = longitude,
+                        onMapClick = { lat, lng ->
+                            latitude = lat
+                            longitude = lng
+                            selectedPresetIndex = null
+                        },
+                        onMarkerDrag = { lat, lng ->
+                            latitude = lat
+                            longitude = lng
+                            selectedPresetIndex = null
+                        },
+                        routePath = routeGeoPoints.ifEmpty { null },
+                        simulationBearing = simulationBearing,
+                        isSimulating = isRouteRunning
+                    )
+                }
+                // My Location FAB
+                SmallFloatingActionButton(
+                    onClick = {
+                        // Get real GPS position
+                        try {
+                            val locMgr = context.getSystemService(android.content.Context.LOCATION_SERVICE) as LocationManager
+                            @Suppress("MissingPermission")
+                            val lastKnown = locMgr.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                                ?: locMgr.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                            if (lastKnown != null) {
+                                latitude = lastKnown.latitude
+                                longitude = lastKnown.longitude
+                                selectedPresetIndex = null
+                                Toast.makeText(context, "📍 Current location", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "GPS unavailable — enable location", Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Location error: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
                     },
-                    onMarkerDrag = { lat, lng ->
-                        latitude = lat
-                        longitude = lng
-                        selectedPresetIndex = null
-                    },
-                    routePath = routeGeoPoints.ifEmpty { null },
-                    simulationBearing = simulationBearing,
-                    isSimulating = isRouteRunning
-                )
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp),
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary
+                ) {
+                    Icon(Icons.Default.MyLocation, contentDescription = "My Location")
+                }
             }
 
             // ── COORDINATES ──
