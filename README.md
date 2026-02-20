@@ -10,7 +10,7 @@
 
 | Feature | Description |
 |---------|-------------|
-| 🗺️ **Interactive Map** | Tap anywhere on the map to set your location |
+| 🗺️ **Interactive Map** | Pan & zoom with single finger. Tap to set location |
 | 🔍 **Address Search** | Search any address or city with live autocomplete |
 | 📌 **My Location** | One-tap button to center on your real GPS position |
 | 📍 **Quick Presets** | Save and manage your favourite locations |
@@ -18,7 +18,9 @@
 | 🎯 **Accuracy Control** | Adjust GPS accuracy from 1m to 100m |
 | 🛣️ **Route Simulation** | Simulate movement along a route with OSRM |
 | 🚗 **Drive Back** | Smoothly drive from spoofed location back to real GPS |
-| 🔒 **All-App Hook** | LSPosed module hides spoofing from ANY app |
+| 🔒 **16-Hook Detection Bypass** | LSPosed module hides spoofing from ANY app |
+| 🔧 **App Fixer** | Per-app identity reset with selective vector control |
+| 📺 **Live Hook Console** | Real-time hook activity monitoring with color-coded entries |
 | 🌗 **Dark/Light Theme** | Beautiful UI in both modes |
 | 📱 **Standard Mode** | Uses Android Mock Location (no root needed) |
 | 🔓 **Root Mode** | Uses SU for undetectable spoofing |
@@ -27,7 +29,7 @@
 
 ## 🛡️ Architecture
 
-Relocate works on **two layers**:
+Relocate works on **three layers**:
 
 ### Layer 1: GPS Spoofing (runs in Relocate)
 Injects fake GPS coordinates into the Android location system.
@@ -37,16 +39,36 @@ Injects fake GPS coordinates into the Android location system.
 | **Standard** | Uses `MockLocationProvider` API | No |
 | **Root** | Uses `su` to write directly to GPS system | Yes |
 
-### Layer 2: Detection Bypass (LSPosed Hook)
+### Layer 2: Detection Bypass (16 LSPosed Hooks)
 Runs **inside target apps** to hide ALL evidence of spoofing:
 
-- ✅ `isFromMockProvider()` → always returns `false`
-- ✅ `isMock` / `isMocked` fields → hidden
-- ✅ Root apps (Magisk, SuperSU) → invisible to `PackageManager`
-- ✅ `su` / `busybox` binaries → `File.exists()` returns `false`
-- ✅ Developer Options → appears disabled
-- ✅ USB Debugging → appears disabled
-- ✅ `Build.TAGS` → shows `release-keys` (not `test-keys`)
+**Location Hooks (v1.2.0):**
+- ✅ Hook 1-2: `isFromMockProvider()` / `isMock` → always `false`
+- ✅ Hook 3: Mock location providers → hidden from `getProviders()`
+- ✅ Hook 4: `ALLOW_MOCK_LOCATION` setting → returns `0`
+- ✅ Hook 5: Coordinates → injected from SharedPreferences
+
+**Root Detection Hooks (v1.3.0):**
+- ✅ Hook 6: `Build.TAGS` → shows `release-keys`
+- ✅ Hook 7-8: Developer Options & USB Debugging → appear disabled
+- ✅ Hook 9: Root apps (Magisk, SuperSU) → invisible to PackageManager
+- ✅ Hook 10: `su`/`busybox` binaries → `File.exists()` returns `false`
+- ✅ Hook 11: `ExtraDeviceInfo.isRooted` → returns `false`
+
+**Identity Spoofing Hooks (v1.5.0+):**
+- ✅ Hook 12: Widevine DRM ID → spoofed `deviceUniqueId`
+- ✅ Hook 13: `Settings.Secure.android_id` → randomized
+
+**Anti-Detection Hooks (v1.8.0):**
+- ✅ Hook 14: Google Advertising ID (GAID) → randomized UUID
+- ✅ Hook 15: `Build.FINGERPRINT` + `DISPLAY` + `HOST` → stock device values
+- ✅ Hook 16: Chrome CookieManager → strips Uber tracking cookies
+
+### Layer 3: App Fixer (Identity Reset)
+Per-app panel to selectively regenerate device identity vectors:
+- Android ID, DRM ID, GAID, Build Fingerprint
+- Chrome cookie clearing (Uber domains only)
+- GMS cache reset, AppOps reset
 
 ---
 
@@ -55,13 +77,14 @@ Runs **inside target apps** to hide ALL evidence of spoofing:
 ### Step 1: Install Relocate APK
 1. Download the latest APK from [Releases](https://github.com/kashif0700444846/Relocate/releases)
 2. Install on your rooted Android device
+3. Open app → Grant all permissions when prompted
 
 ### Step 2: Enable LSPosed Module
 1. Open **LSPosed Manager**
 2. Go to **Modules** → Find **Relocate**
 3. Enable it ✅
 4. Under **Scope**, check the apps you want to spoof (e.g., Uber Driver, Bolt, etc.)
-5. Reboot your device
+5. **Reboot** your device
 
 ### Build from Source
 ```bash
@@ -79,7 +102,7 @@ cd Relocate
 
 1. **Open Relocate**
 2. **Set your fake location** using one of:
-   - 🗺️ Tap on the map
+   - 🗺️ Tap on the map (single-finger pan, pinch to zoom)
    - 🔍 Search an address in the search bar
    - 📍 Select a saved preset
    - 📌 Tap the blue GPS button on map to go to your real location first
@@ -110,9 +133,39 @@ cd Relocate
 
 > **Note:** If you're already within 50 meters of your real position, it will just stop spoofing immediately — no simulation needed.
 
+### 🔧 App Fixer (Identity Reset)
+
+For apps like Uber that fingerprint your device:
+
+1. Open **App Fixer** (🔧 icon in header)
+2. Find the target app (Uber Driver is pinned at top ⭐)
+3. Tap to expand → see current identity values
+4. Check which identities to regenerate:
+   - 📱 Android ID
+   - 🔐 DRM ID (Widevine)
+   - 🎯 Google Ad ID
+   - 🔑 Build Fingerprint
+   - 🍪 Chrome Cookies (Uber domains)
+5. Tap **"🔧 Apply Selected Fixes"**
+6. Reboot → Open Uber → Device appears as new
+
+### 📺 Live Hook Console
+
+Monitor hook activity in real-time:
+
+1. Open **Settings** → **📺 Live Console**
+2. Two tabs:
+   - **App Logs** — Relocate's own activity (spoof start/stop, permissions)
+   - **Hook Activity** — Real-time entries from XPosed hooks running inside target apps
+3. Hook entries are color-coded:
+   - 🟢 Green = Location hooks
+   - 🟠 Orange = Root detection hooks
+   - 🔵 Blue = Identity hooks
+   - 🟣 Purple = v1.8 hooks (GAID, fingerprint, cookies)
+
 ### 🛣️ Route Simulation
 
-For advanced use — simulate movement along any custom route:
+Simulate movement along any custom route:
 
 1. Open the **Route Simulation** section
 2. Search **Start** and **End** locations
@@ -147,6 +200,9 @@ Required to hide spoofing from apps like Uber, Bolt, Lyft, Google Maps.
 
 > **Which spoofing mode with LSPosed?** Standard mode works perfectly fine when LSPosed hooks are active. The hooks hide the mock flag that Standard mode creates. Root mode adds an extra layer of stealth but isn't required.
 
+### For Uber Anti-Detection
+See the full step-by-step guide: **[SETUP_GUIDE.md](SETUP_GUIDE.md)**
+
 ---
 
 ## 🏗️ Tech Stack
@@ -162,7 +218,7 @@ Required to hide spoofing from apps like Uber, Bolt, Lyft, Google Maps.
 | **DataStore** | Local Settings |
 | **XSharedPreferences** | Cross-process Hook Communication |
 | **LSPosed/Xposed** | App Hooking Framework |
-| **GitHub Actions** | CI/CD |
+| **GitHub Actions** | CI/CD — Auto-release APK on push |
 
 ---
 
@@ -170,7 +226,9 @@ Required to hide spoofing from apps like Uber, Bolt, Lyft, Google Maps.
 
 | Version | Changes |
 |---------|---------|
-| **v1.5.0** | 🚗 Drive Back feature, 📝 Updated README |
+| **v1.8.2** | 🗺️ Single-finger map control, 🔐 Permission requests, 📺 Hook log fix, 📝 README update |
+| **v1.8.0** | 🔧 App Fixer redesign, 📺 Live Hook Console, 🔑 Hooks 14-16 (GAID, Fingerprint, Cookies) |
+| **v1.5.0** | 🚗 Drive Back feature, 🔐 DRM + android_id hooks |
 | **v1.4.0** | 🌐 All-app hook support, 📌 My Location button, 🔧 Search crash fix |
 | **v1.3.0** | 🔒 Root/mock detection bypass (11 hooks) |
 | **v1.2.0** | 🛣️ Route simulation, 📍 Presets & Recent |

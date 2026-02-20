@@ -7,6 +7,7 @@ package com.relocate.app.ui.components
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.*
+import android.view.MotionEvent
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -61,6 +62,23 @@ fun OsmMapView(
             MapView(ctx).apply {
                 setTileSource(TileSourceFactory.MAPNIK)
                 setMultiTouchControls(true)
+
+                // ── FIX: Allow single-finger map control ──
+                // The map is inside a verticalScroll Column. Without this,
+                // the parent scroll steals single-finger drag gestures,
+                // forcing the user to use 2 fingers to pan the map.
+                setOnTouchListener { v, event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                        }
+                    }
+                    false // Return false so the map still processes the event
+                }
+
                 controller.setZoom(zoomLevel)
                 controller.setCenter(GeoPoint(latitude, longitude))
 
