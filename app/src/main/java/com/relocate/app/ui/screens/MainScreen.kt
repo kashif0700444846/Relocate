@@ -56,7 +56,8 @@ fun MainScreen(
     prefsManager: PreferencesManager,
     presetStore: PresetStore,
     recentStore: RecentStore,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToFixer: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -211,6 +212,15 @@ fun MainScreen(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // App Fixer button
+                IconButton(onClick = onNavigateToFixer) {
+                    Icon(
+                        Icons.Default.Build,
+                        contentDescription = "App Fixer",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 // Theme toggle
                 IconButton(onClick = {
                     scope.launch { prefsManager.setDarkTheme(!isDark) }

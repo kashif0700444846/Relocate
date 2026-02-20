@@ -1,5 +1,5 @@
 /**
- * [Relocate] EagleHook.kt  —  v1.4.0
+ * [Relocate] EagleHook.kt  —  v1.5.0
  * Author: AntiGravity AI — LSPosed Module Hook
  * Purpose: Hooks inside the target navigation app process via LSPosed/XPosed
  *          to intercept ALL mock location AND root/device-state detection.
@@ -21,6 +21,12 @@
  *     (com.topjohnwu.magisk, eu.chainfire.supersu, com.noshufou.android.su, etc.)
  * 10. su / busybox binaries      — classes22/9: File.exists() on su paths
  * 11. ExtraDeviceInfo.isRooted   — classes6: Uber's own data class field
+ *
+ * DEVICE IDENTITY SPOOFING (v1.5.0 — NEW):
+ * 12. MediaDrm.getPropertyByteArray("deviceUniqueId") → spoofed Widevine DRM ID
+ *     Targets: x-uber-drm-id header in go-online request (ATTESTATION block fix)
+ * 13. Settings.Secure.getString("android_id") → spoofed Android ID
+ *     Targets: androidId field in Uber deviceIds (device fingerprint reset)
  */
 package com.relocate.app.xposed
 
@@ -33,18 +39,21 @@ import de.robv.android.xposed.XC_MethodReplacement
 import de.robv.android.xposed.XSharedPreferences
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
+import java.security.SecureRandom
 
 class UberLocationHook : IXposedHookLoadPackage {
 
     companion object {
         private const val TAG = "[EagleHook]"
-        // v1.4.0: No longer limited to one app — hooks ALL apps
+        // v1.5.0: No longer limited to one app — hooks ALL apps
         private const val RELOCATE_PKG = "com.relocate.app"
         // NOTE: NOT private — accessed by SpoofService cross-class
         const val PREFS_NAME = "spoof_coords"
         const val KEY_ACTIVE = "is_active"
-        const val KEY_LAT = "lat_bits"   // stored as Long (Double.toBits)
-        const val KEY_LNG = "lng_bits"   // stored as Long (Double.toBits)
+        const val KEY_LAT = "lat_bits"       // stored as Long (Double.toBits)
+        const val KEY_LNG = "lng_bits"       // stored as Long (Double.toBits)
+        const val KEY_FAKE_DRM_ID = "fake_drm_id"   // hex string of spoofed Widevine DRM ID
+        const val KEY_FAKE_ANDROID_ID = "fake_android_id" // spoofed android_id
 
         // Root app package names found in Eagle's DEX (classes22.dex, classes9.dex)
         private val ROOT_PACKAGES = setOf(
@@ -89,7 +98,7 @@ class UberLocationHook : IXposedHookLoadPackage {
         // Skip our own to avoid recursion
         if (lpparam.packageName == RELOCATE_PKG) return
 
-        Log.i(TAG, "[Init] Hooking process: ${lpparam.packageName} — installing 11 hooks (v1.4.0)")
+        Log.i(TAG, "[Init] Hooking process: ${lpparam.packageName} — installing 13 hooks (v1.5.0)")
 
         // Load shared preferences written by Relocate's SpoofService
         prefs = XSharedPreferences(RELOCATE_PKG, PREFS_NAME)
@@ -108,7 +117,11 @@ class UberLocationHook : IXposedHookLoadPackage {
         installHookPackageManager(lpparam.classLoader)
         installHookFileExists(lpparam.classLoader)
 
-        Log.i(TAG, "[Init] [DONE] All 11 hooks active in ${lpparam.packageName}")
+        // ── v1.5.0 hooks: Device identity spoofing (x-uber-drm-id + android_id) ──
+        installHookDrmId(lpparam.classLoader)
+        installHookAndroidId(lpparam.classLoader)
+
+        Log.i(TAG, "[Init] [DONE] All 13 hooks active in ${lpparam.packageName}")
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -455,6 +468,88 @@ class UberLocationHook : IXposedHookLoadPackage {
         } catch (e: Exception) {
             Log.e(TAG, "[Hook9] [ERROR] File.exists() hook: ${e.message}")
         }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // v1.5.0 NEW HOOKS — Device Identity Spoofing (DRM ID + Android ID)
+    // Targets: x-uber-drm-id header and androidId body field in go-online request
+    // ═════════════════════════════════════════════════════════════════════════
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HOOK 12: MediaDrm.getPropertyByteArray("deviceUniqueId") → spoofed DRM ID
+    // This is the source of x-uber-drm-id header Uber uses for ATTESTATION.
+    // We intercept the Widevine device unique ID and return a consistent spoofed value
+    // stored in Relocate's SharedPreferences (so it stays stable across calls).
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun installHookDrmId(classLoader: ClassLoader) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                "android.media.MediaDrm", classLoader,
+                "getPropertyByteArray", String::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val property = param.args[0] as? String ?: return
+                        if (property == "deviceUniqueId") {
+                            val fakeDrmId = getSpoofedDrmId()
+                            Log.d(TAG, "[Hook12] MediaDrm.deviceUniqueId → spoofed DRM ID (${fakeDrmId.size} bytes)")
+                            param.result = fakeDrmId
+                        }
+                    }
+                }
+            )
+            Log.i(TAG, "[Hook12] [SUCCESS] MediaDrm.getPropertyByteArray(deviceUniqueId) → spoofed")
+        } catch (e: Exception) {
+            Log.e(TAG, "[Hook12] [ERROR] MediaDrm hook failed: ${e.message}")
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HOOK 13: Settings.Secure.getString("android_id") → spoofed Android ID
+    // Uber sends androidId in x-uber-device-ids header and request body.
+    // This must match what was registered with Uber's backend — so we return
+    // a consistent spoofed value stored in Relocate's SharedPreferences.
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun installHookAndroidId(classLoader: ClassLoader) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                "android.provider.Settings\$Secure", classLoader,
+                "getString", ContentResolver::class.java, String::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val key = param.args[1] as? String ?: return
+                        if (key == "android_id") {
+                            prefs?.reload()
+                            val fakeId = prefs?.getString(KEY_FAKE_ANDROID_ID, null)
+                            if (!fakeId.isNullOrBlank()) {
+                                Log.d(TAG, "[Hook13] Settings.Secure.android_id → $fakeId")
+                                param.result = fakeId
+                            }
+                        }
+                    }
+                }
+            )
+            Log.i(TAG, "[Hook13] [SUCCESS] Settings.Secure.getString(android_id) → spoofed")
+        } catch (e: Exception) {
+            Log.e(TAG, "[Hook13] [ERROR] android_id hook failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Returns a consistent spoofed DRM ID (32 bytes).
+     * Stored as hex in Relocate's SharedPreferences (KEY_FAKE_DRM_ID).
+     * If not set yet, generates a random one — Relocate's App Fixer writes this.
+     */
+    private fun getSpoofedDrmId(): ByteArray {
+        prefs?.reload()
+        val hexStr = prefs?.getString(KEY_FAKE_DRM_ID, null)
+        if (!hexStr.isNullOrBlank() && hexStr.length == 64) {
+            return hexStr.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        }
+        // Fallback: generate random 32 bytes (stable per-process, not ideal)
+        val random = ByteArray(32)
+        SecureRandom().nextBytes(random)
+        Log.w(TAG, "[Hook12] No fake_drm_id in prefs — using random. Run App Fixer to set a stable ID.")
+        return random
     }
 
     // ═════════════════════════════════════════════════════════════════════════

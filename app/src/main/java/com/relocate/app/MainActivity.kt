@@ -18,6 +18,7 @@ import androidx.navigation.compose.rememberNavController
 import com.relocate.app.data.PreferencesManager
 import com.relocate.app.data.PresetStore
 import com.relocate.app.data.RecentStore
+import com.relocate.app.ui.screens.AppFixerScreen
 import com.relocate.app.ui.screens.MainScreen
 import com.relocate.app.ui.screens.SettingsScreen
 import com.relocate.app.ui.theme.RelocateTheme
@@ -54,6 +55,9 @@ class MainActivity : ComponentActivity() {
                                 recentStore = recentStore,
                                 onNavigateToSettings = {
                                     navController.navigate("settings")
+                                },
+                                onNavigateToFixer = {
+                                    navController.navigate("fixer")
                                 }
                             )
                         }
@@ -63,6 +67,12 @@ class MainActivity : ComponentActivity() {
                                 prefsManager = prefsManager,
                                 presetStore = presetStore,
                                 recentStore = recentStore,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable("fixer") {
+                            AppFixerScreen(
                                 onBack = { navController.popBackStack() }
                             )
                         }
