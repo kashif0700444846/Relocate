@@ -623,7 +623,8 @@ fun SettingsScreen(
                     }
 
                     // Update result
-                    updateInfo?.let { info ->
+                    val info = updateInfo
+                    if (info != null) {
                         Spacer(Modifier.height(12.dp))
 
                         if (info.isUpdateAvailable) {
@@ -672,25 +673,26 @@ fun SettingsScreen(
                                     Spacer(Modifier.height(8.dp))
 
                                     // Download status
-                                    when (val status = downloadStatus) {
-                                        is com.relocate.app.updater.UpdateService.DownloadStatus.Downloading -> {
+                                    val status = downloadStatus
+                                    when {
+                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Downloading -> {
                                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                                             Spacer(Modifier.height(4.dp))
                                             Text("Downloading...", style = MaterialTheme.typography.labelSmall)
                                         }
-                                        is com.relocate.app.updater.UpdateService.DownloadStatus.Installing -> {
+                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Installing -> {
                                             Text("📲 Opening installer...", fontWeight = FontWeight.Bold,
                                                 color = Color(0xFF2196F3))
                                         }
-                                        is com.relocate.app.updater.UpdateService.DownloadStatus.Done -> {
+                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Done -> {
                                             Text("✅ Install started!", fontWeight = FontWeight.Bold,
                                                 color = Color(0xFF4CAF50))
                                         }
-                                        is com.relocate.app.updater.UpdateService.DownloadStatus.Failed -> {
+                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Failed -> {
                                             Text("❌ ${status.error}", color = Color(0xFFF44336),
                                                 style = MaterialTheme.typography.bodySmall)
                                         }
-                                        null -> {
+                                        else -> {
                                             // Download button
                                             if (info.apkUrl != null) {
                                                 Button(
@@ -701,10 +703,10 @@ fun SettingsScreen(
                                                                 context = context,
                                                                 apkUrl = info.apkUrl,
                                                                 version = info.latestVersion,
-                                                                onProgress = { status ->
-                                                                    downloadStatus = status
-                                                                    if (status is com.relocate.app.updater.UpdateService.DownloadStatus.Done ||
-                                                                        status is com.relocate.app.updater.UpdateService.DownloadStatus.Failed) {
+                                                                onProgress = { s ->
+                                                                    downloadStatus = s
+                                                                    if (s is com.relocate.app.updater.UpdateService.DownloadStatus.Done ||
+                                                                        s is com.relocate.app.updater.UpdateService.DownloadStatus.Failed) {
                                                                         isDownloading = false
                                                                     }
                                                                 }
