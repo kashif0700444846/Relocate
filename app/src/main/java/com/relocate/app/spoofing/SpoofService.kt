@@ -15,6 +15,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import com.relocate.app.logging.AppLogger
 import android.location.LocationListener
 import android.location.LocationManager
 import com.relocate.app.MainActivity
@@ -167,6 +168,7 @@ class SpoofService : Service() {
             writeSpoofCoords(lat, lng)
 
             Log.i(TAG, "[Start] [SUCCESS] Spoofing started in $mode mode at $lat, $lng")
+            AppLogger.i(TAG, "📍 Spoofing STARTED in $currentModeLabel mode at ${String.format(Locale.US, "%.6f, %.6f", lat, lng)}")
 
             // Continuous update loop — reads volatile coordinates each tick
             updateJob = serviceScope.launch {
@@ -208,6 +210,7 @@ class SpoofService : Service() {
         // Clear SharedPrefs so UberLocationHook stops injecting fake coords
         clearSpoofCoords()
         Log.i(TAG, "[Stop] [SUCCESS] Spoofing stopped")
+        AppLogger.i(TAG, "⏹ Spoofing STOPPED")
         // Restore the real location immediately
         restoreRealLocation()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -267,6 +270,7 @@ class SpoofService : Service() {
                 apply()
             }
             Log.d(TAG, "[SpoofPrefs] [WRITE] lat=$lat lng=$lng written for XPosed hook")
+            AppLogger.d(TAG, "XPosed prefs written: ${String.format(Locale.US, "%.6f, %.6f", lat, lng)}")
         } catch (e: Exception) {
             Log.e(TAG, "[SpoofPrefs] [ERROR] Failed to write spoof prefs: ${e.message}")
         }
