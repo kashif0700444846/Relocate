@@ -15,7 +15,7 @@ import java.io.File
 object RootUtils {
 
     private const val TAG = "RootUtils"
-    private const val HOOK_LOG_PATH = "/data/local/tmp/${SpoofConstants.HOOK_LOG_FILENAME}"
+    private val HOOK_LOG_PATH = "/data/local/tmp/${SpoofConstants.HOOK_LOG_FILENAME}"
 
     /**
      * Run a shell command as root via `su`.
