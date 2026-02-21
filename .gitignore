@@ -19,3 +19,4 @@
 /app/release
 *.jks
 *.keystore
+*.b64
