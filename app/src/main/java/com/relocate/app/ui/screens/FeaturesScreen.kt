@@ -44,7 +44,8 @@ fun FeaturesScreen(
     onBack: () -> Unit,
     onNavigateToFixer: () -> Unit = {},
     onNavigateToLogs: () -> Unit = {},
-    onNavigateToSettings: () -> Unit = {}
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToRouteSim: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -60,11 +61,15 @@ fun FeaturesScreen(
     // Poll permissions every 3 seconds (so changes reflect immediately)
     LaunchedEffect(Unit) {
         while (isActive) {
-            withContext(Dispatchers.IO) {
-                mockStatus = DeviceStatusUtils.getMockLocationStatus(context)
-                isRootAvailable = DeviceStatusUtils.isRootAvailable()
-                lsposedStatus = DeviceStatusUtils.getLSPosedStatus()
-                hasLocation = DeviceStatusUtils.hasLocationPermission(context)
+            try {
+                withContext(Dispatchers.IO) {
+                    mockStatus = try { DeviceStatusUtils.getMockLocationStatus(context) } catch (_: Exception) { MockLocationStatus.UNKNOWN }
+                    isRootAvailable = try { DeviceStatusUtils.isRootAvailable() } catch (_: Exception) { false }
+                    lsposedStatus = try { DeviceStatusUtils.getLSPosedStatus() } catch (_: Exception) { LSPosedStatus.UNKNOWN }
+                    hasLocation = try { DeviceStatusUtils.hasLocationPermission(context) } catch (_: Exception) { false }
+                }
+            } catch (_: Exception) {
+                // Silently fail — show UNKNOWN/false states rather than crashing
             }
             isChecking = false
             delay(3000)
@@ -98,10 +103,12 @@ fun FeaturesScreen(
                     IconButton(onClick = {
                         isChecking = true
                         scope.launch(Dispatchers.IO) {
-                            mockStatus = DeviceStatusUtils.getMockLocationStatus(context)
-                            isRootAvailable = DeviceStatusUtils.isRootAvailable()
-                            lsposedStatus = DeviceStatusUtils.getLSPosedStatus()
-                            hasLocation = DeviceStatusUtils.hasLocationPermission(context)
+                            try {
+                                mockStatus = DeviceStatusUtils.getMockLocationStatus(context)
+                                isRootAvailable = DeviceStatusUtils.isRootAvailable()
+                                lsposedStatus = DeviceStatusUtils.getLSPosedStatus()
+                                hasLocation = DeviceStatusUtils.hasLocationPermission(context)
+                            } catch (_: Exception) { /* show current state */ }
                             isChecking = false
                         }
                     }) {
@@ -256,21 +263,7 @@ fun FeaturesScreen(
                 requirementLabel = if (!hasLocation) "Requires Location Permission" else null,
                 isEnabled = hasLocation,
                 accentColor = Color(0xFF4CAF50),
-                onClick = {
-                    // Navigate to settings which has route sim
-                    onNavigateToSettings()
-                }
-            )
-
-            // ⚙️ Settings — always accessible
-            FeatureCard(
-                icon = Icons.Default.Settings,
-                title = "Settings",
-                description = "Display preferences, preset manager, app updates, and version info.",
-                requirementLabel = null,
-                isEnabled = true,
-                accentColor = Color(0xFF9C27B0),
-                onClick = onNavigateToSettings
+                onClick = onNavigateToRouteSim
             )
 
             Spacer(modifier = Modifier.height(32.dp))

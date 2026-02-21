@@ -69,7 +69,12 @@ object DeviceStatusUtils {
      * Wraps RootUtils.hasRoot() for consistency.
      */
     fun isRootAvailable(): Boolean {
-        return RootUtils.hasRoot()
+        return try {
+            RootUtils.hasRoot()
+        } catch (e: Exception) {
+            Log.w(TAG, "[Root] Check failed: ${e.message}")
+            false
+        }
     }
 
     // ── LSPosed / Hook Status ───────────────────────────────────────────────

@@ -34,6 +34,7 @@ import com.relocate.app.logging.AppLogger
 import com.relocate.app.ui.screens.AppFixerScreen
 import com.relocate.app.ui.screens.FeaturesScreen
 import com.relocate.app.ui.screens.MainScreen
+import com.relocate.app.ui.screens.RouteSimulationScreen
 import com.relocate.app.ui.screens.SettingsScreen
 import com.relocate.app.ui.theme.RelocateTheme
 import com.relocate.app.util.RootUtils
@@ -138,7 +139,8 @@ class MainActivity : ComponentActivity() {
                                 onBack = { navController.popBackStack() },
                                 onNavigateToFixer = { navController.navigate("fixer") },
                                 onNavigateToLogs = { navController.navigate("logs") },
-                                onNavigateToSettings = { navController.navigate("settings") }
+                                onNavigateToSettings = { navController.navigate("settings") },
+                                onNavigateToRouteSim = { navController.navigate("route_sim") }
                             )
                         }
 
@@ -159,6 +161,13 @@ class MainActivity : ComponentActivity() {
 
                         composable("logs") {
                             LogScreen(
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable("route_sim") {
+                            RouteSimulationScreen(
+                                prefsManager = prefsManager,
                                 onBack = { navController.popBackStack() }
                             )
                         }
