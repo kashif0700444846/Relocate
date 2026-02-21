@@ -18,5 +18,6 @@
 /app/build
 /app/release
 *.jks
+!signing/relocate-release.jks
 *.keystore
 *.b64
