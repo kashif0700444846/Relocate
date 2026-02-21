@@ -32,6 +32,7 @@ import com.relocate.app.data.PresetStore
 import com.relocate.app.data.RecentStore
 import com.relocate.app.logging.AppLogger
 import com.relocate.app.ui.screens.AppFixerScreen
+import com.relocate.app.ui.screens.FeaturesScreen
 import com.relocate.app.ui.screens.MainScreen
 import com.relocate.app.ui.screens.SettingsScreen
 import com.relocate.app.ui.theme.RelocateTheme
